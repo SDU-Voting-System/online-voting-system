@@ -520,48 +520,56 @@ const AdminDashboard = () => {
                   <Plus className="mr-2 h-4 w-4" /> Add New Candidate
                 </Button>
               </div>
-              <div className="mt-6 space-y-4">
-                {store.positions.map((pos) => {
-                  const posCandidates = store.candidates.filter((c) => c.position === pos.id);
-                  if (posCandidates.length === 0) return null;
-                  return (
-                    <div key={pos.id}>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{pos.title}</p>
-                      <div className="mt-2 space-y-2">
-                        {posCandidates.map((c) => (
-                          <div key={c.id} className="flex items-center justify-between rounded-lg border bg-card p-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                                <UserCheck className="h-5 w-5 text-muted-foreground" />
+              {store.candidates.length === 0 ? (
+                <div className="mt-8 rounded-lg border border-dashed bg-card p-8 text-center">
+                  <UserCheck className="mx-auto h-12 w-12 text-muted-foreground/50" />
+                  <p className="mt-3 text-sm font-medium">No candidates registered yet.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Use the form above to add candidates for available positions.</p>
+                </div>
+              ) : (
+                <div className="mt-6 space-y-4">
+                  {store.positions.map((pos) => {
+                    const posCandidates = store.candidates.filter((c) => c.position === pos.id);
+                    if (posCandidates.length === 0) return null;
+                    return (
+                      <div key={pos.id}>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{pos.title}</p>
+                        <div className="mt-2 space-y-2">
+                          {posCandidates.map((c) => (
+                            <div key={c.id} className="flex items-center justify-between rounded-lg border bg-card p-4">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                                  <UserCheck className="h-5 w-5 text-muted-foreground" />
+                                </div>
+                                <div>
+                                  <p className="font-medium">{c.name}</p>
+                                  <p className="text-xs text-muted-foreground">{pos.title}</p>
+                                </div>
                               </div>
-                              <div>
-                                <p className="font-medium">{c.name}</p>
-                                <p className="text-xs text-muted-foreground">{pos.title}</p>
-                              </div>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={async () => {
+                                  try {
+                                    store.deleteCandidate(c.id);
+                                    await deleteDoc(doc(db, 'candidates', c.id));
+                                    toast.success('Candidate deleted');
+                                  } catch (err) {
+                                    console.error('Failed to delete candidate in Firestore', err);
+                                    toast.error('Failed to delete candidate');
+                                  }
+                                }}
+                              >
+                                <Trash2 className="mr-1 h-3 w-3" /> Delete
+                              </Button>
                             </div>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={async () => {
-                                try {
-                                  store.deleteCandidate(c.id);
-                                  await deleteDoc(doc(db, 'candidates', c.id));
-                                  toast.success('Candidate deleted');
-                                } catch (err) {
-                                  console.error('Failed to delete candidate in Firestore', err);
-                                  toast.error('Failed to delete candidate');
-                                }
-                              }}
-                            >
-                              <Trash2 className="mr-1 h-3 w-3" /> Delete
-                            </Button>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

@@ -85,33 +85,11 @@ const defaultPositions: Position[] = [
   { id: 'pro', title: 'Public Relations Officer' },
 ];
 
-const defaultVoters: Voter[] = [
-  { matricNumber: 'STU/2023/001', fullName: 'Adewale Okonkwo', department: 'Computer Science', faculty: 'Science', email: 'adewale@university.edu', hasVoted: false },
-  { matricNumber: 'STU/2023/002', fullName: 'Fatima Ibrahim', department: 'Political Science', faculty: 'Social Sciences', email: 'fatima@university.edu', hasVoted: false },
-  { matricNumber: 'STU/2023/003', fullName: 'Chukwuemeka Obi', department: 'Law', faculty: 'Law', email: 'chukwuemeka@university.edu', hasVoted: false },
-  { matricNumber: 'STU/2023/004', fullName: 'Ngozi Eze', department: 'Economics', faculty: 'Social Sciences', email: 'ngozi@university.edu', hasVoted: false },
-  { matricNumber: 'ADMIN/001', fullName: 'Electoral Admin', department: 'Administration', faculty: 'Registry', email: 'admin@university.edu', hasVoted: false },
-];
+const defaultVoters: Voter[] = [];
 
-const defaultCandidates: Candidate[] = [
-  { id: 'c1', name: 'Olumide Adeyemi', position: 'president', manifesto: 'I pledge to champion transparency in student governance. My administration will establish an open-budget system, monthly town halls, and a student welfare emergency fund. Together, we will build a union that truly serves every student.', photo: '' },
-  { id: 'c2', name: 'Amina Bello', position: 'president', manifesto: 'My vision is a union rooted in academic excellence and social justice. I will advocate for improved library hours, mental health resources, and partnerships with industry to create internship pathways for all faculties.', photo: '' },
-  { id: 'c3', name: 'Tunde Bakare', position: 'vice-president', manifesto: 'As Vice President, I will bridge the gap between students and administration. My focus will be on resolving hostel accommodation issues, improving campus security, and ensuring every department has adequate representation.', photo: '' },
-  { id: 'c4', name: 'Chidinma Nwosu', position: 'vice-president', manifesto: 'I stand for inclusivity and progress. My plan includes establishing a women\'s safety initiative, creating inter-faculty collaboration programs, and digitizing all union processes for greater accessibility.', photo: '' },
-  { id: 'c5', name: 'Emeka Uche', position: 'secretary-general', manifesto: 'Efficiency and accountability will define my tenure. I will digitize all meeting records, ensure timely communication of union decisions, and establish a transparent grievance redressal mechanism.', photo: '' },
-  { id: 'c6', name: 'Halima Suleiman', position: 'treasurer', manifesto: 'Financial stewardship is my priority. I will implement quarterly financial reports, establish an audit committee, and create a student entrepreneurship micro-grant programme funded by responsible budgeting.', photo: '' },
-  { id: 'c7', name: 'David Okafor', position: 'pro', manifesto: 'I will transform how the union communicates. Expect a revamped social media presence, a weekly digital newsletter, and a dedicated feedback platform where every student voice can be heard and addressed.', photo: '' },
-];
+const defaultCandidates: Candidate[] = [];
 
-const defaultPolls: Poll[] = [
-  {
-    id: 'poll-1',
-    question: 'Should the Student Union extend library hours to midnight?',
-    options: ['Yes', 'No', 'Undecided'],
-    isActive: true,
-    votes: { 'Yes': 24, 'No': 8, 'Undecided': 5 },
-  },
-];
+const defaultPolls: Poll[] = [];
 
 let idCounter = 100;
 const genId = () => `gen-${++idCounter}`;
