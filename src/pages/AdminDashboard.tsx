@@ -28,6 +28,14 @@ import {
 
 type Tab = 'voters' | 'candidates' | 'positions' | 'polls' | 'analytics';
 
+interface FirebaseVote {
+  id?: string;
+  studentId: string;
+  positionId: string;
+  candidateId: string;
+  timestamp?: any;
+}
+
 const formatDateTimeLocal = (d: Date) => {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -60,7 +68,9 @@ const AdminDashboard = () => {
   }, [store.currentUser, store.isAdmin, navigate]);
 
   const [firestoreVoters, setFirestoreVoters] = useState<Voter[]>([]);
+  const [firestoreVotes, setFirestoreVotes] = useState<any[]>([]);
 
+  // Listen to eligible_students collection in real-time
   useEffect(() => {
     const q = collection(db, 'eligible_students');
     const unsub = onSnapshot(q, (snap) => {
@@ -78,6 +88,22 @@ const AdminDashboard = () => {
       setFirestoreVoters(mapped);
     }, (err) => {
       console.error('eligible_students onSnapshot error', err);
+    });
+    return () => unsub();
+  }, []);
+
+  // Listen to votes collection in real-time for analytics
+  useEffect(() => {
+    const votesCollection = collection(db, 'votes');
+    const unsub = onSnapshot(votesCollection, (snap) => {
+      const votes = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      }));
+      setFirestoreVotes(votes);
+      console.log(`Real-time votes update: ${votes.length} votes`, votes);
+    }, (err) => {
+      console.error('votes onSnapshot error', err);
     });
     return () => unsub();
   }, []);
@@ -365,17 +391,18 @@ const AdminDashboard = () => {
     setShowSaveBtn(false);
   };
 
-  // Analytics
+  // Analytics - Aggregate from Firestore votes
   const tallyByPosition = useMemo(() => {
     return store.positions.map((pos) => {
       const posCandidates = store.candidates.filter((c) => c.position === pos.id);
-      const tallies = posCandidates.map((c) => ({
-        candidate: c,
-        count: store.votes.filter((v) => v.candidateId === c.id).length,
-      }));
+      const tallies = posCandidates.map((c) => {
+        // Count votes from Firestore votes collection
+        const count = firestoreVotes.filter((v) => v.candidateId === c.id).length;
+        return { candidate: c, count };
+      });
       return { position: pos, tallies };
     });
-  }, [store.positions, store.candidates, store.votes]);
+  }, [store.positions, store.candidates, firestoreVotes]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'voters', label: 'Voters', icon: <Users className="h-4 w-4" /> },
@@ -677,8 +704,8 @@ const AdminDashboard = () => {
               <div className="mt-8 rounded-lg border bg-card p-4">
                 <p className="text-sm font-semibold">Summary</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Total votes cast: {store.votes.length} • 
-                  Voters participated: {store.voters.filter(v => v.hasVoted).length} / {store.voters.length}
+                  Total votes cast: {firestoreVotes.length} • 
+                  Voters participated: {firestoreVoters.filter(v => v.hasVoted).length} / {firestoreVoters.length}
                 </p>
               </div>
             </div>

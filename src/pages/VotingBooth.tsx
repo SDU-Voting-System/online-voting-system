@@ -64,35 +64,49 @@ const VotingBooth = () => {
     if (!currentUser) return;
     setSubmitting(true);
     try {
-      await runTransaction(db, async (transaction) => {
-        const studentRef = doc(db, 'eligible_students', currentUser.matricNumber);
-        const studentSnap = await transaction.get(studentRef);
-        if (!studentSnap.exists()) throw new Error('Student record not found');
-        const studentData = studentSnap.data() as any;
-        if (studentData.hasVoted) throw new Error('Student has already voted');
+      // Pre-submission check: verify student hasn't already voted
+      const studentRef = doc(db, 'eligible_students', currentUser.matricNumber);
+      const preCheckSnap = await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(studentRef);
+        if (!snap.exists()) {
+          throw new Error('Student record not found in the election system.');
+        }
+        const data = snap.data() as any;
+        if (data.hasVoted) {
+          throw new Error('Our records show you have already voted. Each student can only vote once.');
+        }
+        return snap;
+      });
 
-        // create vote documents for each selection
+      // If pre-check passed, proceed with vote submission
+      await runTransaction(db, async (transaction) => {
+        // Create vote documents for each selection
         Object.entries(selections).forEach(([positionId, candidateId]) => {
           const voteRef = doc(collection(db, 'votes'));
           transaction.set(voteRef, {
             studentId: currentUser.matricNumber,
+            voterMatric: currentUser.matricNumber,
             positionId,
             candidateId,
             timestamp: serverTimestamp(),
           });
         });
 
-        // mark student as hasVoted
-        transaction.update(studentRef, { hasVoted: true });
+        // Update student document: mark as hasVoted and set status to 'voted'
+        transaction.update(studentRef, {
+          hasVoted: true,
+          status: 'voted',
+        });
       });
 
-      // update local state/store after successful transaction
+      // Update local state/store after successful transaction
       castVotes(selections);
       markVoted(currentUser.matricNumber);
       setSubmitted(true);
     } catch (err: any) {
       console.error('Failed to submit ballot', err);
-      alert(err?.message || 'Failed to submit ballot');
+      const errorMessage = err?.message || 'Failed to submit ballot. Please try again.';
+      alert(errorMessage);
     } finally {
       setSubmitting(false);
     }
