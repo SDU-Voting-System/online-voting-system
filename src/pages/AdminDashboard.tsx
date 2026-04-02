@@ -170,100 +170,86 @@ const AdminDashboard = () => {
     if (!confirmed) return;
 
     try {
+      console.log('🔄 Starting election reset...');
+
       // Delete eligible_students collection
-      console.log('Starting deletion of eligible_students collection...');
+      console.log('Deleting eligible_students...');
       const studentsDocs = await getDocs(collection(db, 'eligible_students'));
-      console.log(`Found ${studentsDocs.docs.length} eligible_students documents to delete`);
-      
+      let studentCount = 0;
       if (studentsDocs.docs.length > 0) {
         let batch = writeBatch(db);
         let batchCount = 0;
-        
         studentsDocs.docs.forEach((docSnap) => {
           batch.delete(docSnap.ref);
           batchCount++;
-          
-          // Commit batch every 500 operations (Firestore batch limit)
+          studentCount++;
           if (batchCount === 500) {
             batch.commit();
             batch = writeBatch(db);
             batchCount = 0;
           }
         });
-        
-        // Commit remaining operations
-        if (batchCount > 0) {
-          await batch.commit();
-        }
+        if (batchCount > 0) await batch.commit();
       }
-      console.log('Successfully deleted all eligible_students documents');
+      console.log(`✅ Deleted ${studentCount} student records`);
 
       // Delete candidates collection
-      console.log('Starting deletion of candidates collection...');
+      console.log('Deleting candidates...');
       const candidatesDocs = await getDocs(collection(db, 'candidates'));
-      console.log(`Found ${candidatesDocs.docs.length} candidates documents to delete`);
-      
+      let candidateCount = 0;
       if (candidatesDocs.docs.length > 0) {
         let batch = writeBatch(db);
         let batchCount = 0;
-        
         candidatesDocs.docs.forEach((docSnap) => {
           batch.delete(docSnap.ref);
           batchCount++;
-          
+          candidateCount++;
           if (batchCount === 500) {
             batch.commit();
             batch = writeBatch(db);
             batchCount = 0;
           }
         });
-        
-        if (batchCount > 0) {
-          await batch.commit();
-        }
+        if (batchCount > 0) await batch.commit();
       }
-      console.log('Successfully deleted all candidates documents');
+      console.log(`✅ Deleted ${candidateCount} candidates`);
 
       // Delete votes collection
-      console.log('Starting deletion of votes collection...');
+      console.log('Deleting votes...');
       const votesDocs = await getDocs(collection(db, 'votes'));
-      console.log(`Found ${votesDocs.docs.length} votes documents to delete`);
-      
+      let voteCount = 0;
       if (votesDocs.docs.length > 0) {
         let batch = writeBatch(db);
         let batchCount = 0;
-        
         votesDocs.docs.forEach((docSnap) => {
           batch.delete(docSnap.ref);
           batchCount++;
-          
+          voteCount++;
           if (batchCount === 500) {
             batch.commit();
             batch = writeBatch(db);
             batchCount = 0;
           }
         });
-        
-        if (batchCount > 0) {
-          await batch.commit();
-        }
+        if (batchCount > 0) await batch.commit();
       }
-      console.log('Successfully deleted all votes documents');
+      console.log(`✅ Deleted ${voteCount} votes`);
 
-      // Clear local store and UI state
+      // Clear local state
       store.voters.length = 0;
       store.candidates.length = 0;
       store.votes.length = 0;
       setFirestoreVoters([]);
+      setFirestoreVotes([]);
       setParsedVoters([]);
       setSearch('');
       setActiveTab('voters');
 
-      console.log('Election reset complete - all collections cleared');
-      toast.success('Election reset successfully. All data has been deleted.');
+      console.log('✅ Election reset complete!');
+      toast.success(`Election reset successfully. Deleted ${studentCount} students, ${candidateCount} candidates, and ${voteCount} votes.`);
     } catch (err) {
-      console.error('Failed to reset election', err);
-      toast.error('Failed to reset election. Please try again.');
+      console.error('❌ Failed to reset election', err);
+      toast.error(`Failed to reset election: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -493,8 +479,9 @@ const AdminDashboard = () => {
                     <tr className="border-b bg-secondary">
                       <th className="px-4 py-3 text-left font-semibold">Matric No.</th>
                       <th className="px-4 py-3 text-left font-semibold">Full Name</th>
-                      <th className="hidden px-4 py-3 text-left font-semibold sm:table-cell">Dept</th>
-                      <th className="hidden px-4 py-3 text-left font-semibold md:table-cell">Faculty</th>
+                      <th className="hidden px-4 py-3 text-left font-semibold sm:table-cell">Email</th>
+                      <th className="hidden px-4 py-3 text-left font-semibold md:table-cell">Dept</th>
+                      <th className="hidden px-4 py-3 text-left font-semibold lg:table-cell">Faculty</th>
                       <th className="px-4 py-3 text-left font-semibold">Status</th>
                     </tr>
                   </thead>
@@ -503,8 +490,9 @@ const AdminDashboard = () => {
                       <tr key={v.matricNumber} className="border-b last:border-b-0">
                         <td className="px-4 py-3 font-mono text-xs">{v.matricNumber}</td>
                         <td className="px-4 py-3 font-medium">{v.fullName}</td>
-                        <td className="hidden px-4 py-3 sm:table-cell">{v.department}</td>
-                        <td className="hidden px-4 py-3 md:table-cell">{v.faculty}</td>
+                        <td className="hidden px-4 py-3 text-xs sm:table-cell">{v.email}</td>
+                        <td className="hidden px-4 py-3 md:table-cell">{v.department}</td>
+                        <td className="hidden px-4 py-3 lg:table-cell">{v.faculty}</td>
                         <td className="px-4 py-3">
                           {v.hasVoted ? (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-accent">
