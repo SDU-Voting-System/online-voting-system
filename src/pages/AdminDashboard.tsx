@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { db } from '@/firebase';
-import { writeBatch, doc, setDoc, deleteDoc, onSnapshot, collection, getDocs } from 'firebase/firestore';
+import { writeBatch, doc, setDoc, deleteDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Settings, Users, UserCheck, BarChart3, Plus, Trash2, Search, Upload, Edit2, ShieldCheck, LogOut, Save, Vote, Power, AlertTriangle,
 } from 'lucide-react';
@@ -41,6 +41,14 @@ const formatDateTimeLocal = (d: Date) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// Firestore Collection Constants
+const COLLECTIONS = {
+  POSITIONS: 'positions',
+  CANDIDATES: 'candidates',
+  ELIGIBLE_STUDENTS: 'eligible_students',
+  VOTES: 'votes',
+} as const;
+
 const AdminDashboard = () => {
   const store = useElectionStore();
   const navigate = useNavigate();
@@ -72,10 +80,12 @@ const AdminDashboard = () => {
   const [firestorePositions, setFirestorePositions] = useState<Position[]>([]);
   const [firestoreCandidates, setFirestoreCandidates] = useState<Candidate[]>([]);
 
-  // Listen to eligible_students collection in real-time
+  // ===== CONSOLIDATED REAL-TIME LISTENERS =====
   useEffect(() => {
-    const q = collection(db, 'eligible_students');
-    const unsub = onSnapshot(q, (snap) => {
+    console.log('🔄 Setting up Firestore real-time listeners...');
+
+    // Listener 1: eligible_students
+    const votersUnsub = onSnapshot(collection(db, COLLECTIONS.ELIGIBLE_STUDENTS), (snap) => {
       const mapped: Voter[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
@@ -88,32 +98,25 @@ const AdminDashboard = () => {
         };
       });
       setFirestoreVoters(mapped);
+      console.log(`✅ Synced ${mapped.length} voters from ${COLLECTIONS.ELIGIBLE_STUDENTS}`);
     }, (err) => {
-      console.error('eligible_students onSnapshot error', err);
+      console.error(`Firestore Error [${err.code}]:`, err.message, err);
     });
-    return () => unsub();
-  }, []);
 
-  // Listen to votes collection in real-time for analytics
-  useEffect(() => {
-    const votesCollection = collection(db, 'votes');
-    const unsub = onSnapshot(votesCollection, (snap) => {
+    // Listener 2: votes
+    const votesUnsub = onSnapshot(collection(db, COLLECTIONS.VOTES), (snap) => {
       const votes = snap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
       }));
       setFirestoreVotes(votes);
-      console.log(`Real-time votes update: ${votes.length} votes`, votes);
+      console.log(`✅ Synced ${votes.length} votes from ${COLLECTIONS.VOTES}`);
     }, (err) => {
-      console.error('votes onSnapshot error', err);
+      console.error(`Firestore Error [${err.code}]:`, err.message, err);
     });
-    return () => unsub();
-  }, []);
 
-  // Listen to positions collection in real-time
-  useEffect(() => {
-    const positionsCollection = collection(db, 'positions');
-    const unsub = onSnapshot(positionsCollection, (snap) => {
+    // Listener 3: positions
+    const positionsUnsub = onSnapshot(collection(db, COLLECTIONS.POSITIONS), (snap) => {
       const positions: Position[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
@@ -122,17 +125,13 @@ const AdminDashboard = () => {
         };
       });
       setFirestorePositions(positions);
-      console.log(`Real-time positions update: ${positions.length} positions`, positions);
+      console.log(`✅ Synced ${positions.length} positions from ${COLLECTIONS.POSITIONS}`);
     }, (err) => {
-      console.error('positions onSnapshot error', err);
+      console.error(`Firestore Error [${err.code}]:`, err.message, err);
     });
-    return () => unsub();
-  }, []);
 
-  // Listen to candidates collection in real-time
-  useEffect(() => {
-    const candidatesCollection = collection(db, 'candidates');
-    const unsub = onSnapshot(candidatesCollection, (snap) => {
+    // Listener 4: candidates
+    const candidatesUnsub = onSnapshot(collection(db, COLLECTIONS.CANDIDATES), (snap) => {
       const candidates: Candidate[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
@@ -144,11 +143,19 @@ const AdminDashboard = () => {
         };
       });
       setFirestoreCandidates(candidates);
-      console.log(`Real-time candidates update: ${candidates.length} candidates`, candidates);
+      console.log(`✅ Synced ${candidates.length} candidates from ${COLLECTIONS.CANDIDATES}`);
     }, (err) => {
-      console.error('candidates onSnapshot error', err);
+      console.error(`Firestore Error [${err.code}]:`, err.message, err);
     });
-    return () => unsub();
+
+    // Cleanup on unmount
+    return () => {
+      console.log('🔄 Cleaning up Firestore listeners...');
+      votersUnsub();
+      votesUnsub();
+      positionsUnsub();
+      candidatesUnsub();
+    };
   }, []);
 
   const filteredVoters = useMemo(() => {
@@ -165,12 +172,15 @@ const AdminDashboard = () => {
     const id = `cand-${Date.now()}`;
     const candidate = { ...newCandidate, id } as Candidate;
     try {
+      console.log(`📝 Adding candidate to ${COLLECTIONS.CANDIDATES}:`, candidate);
       // persist to Firestore (listeners will sync UI automatically)
-      await setDoc(doc(db, 'candidates', id), candidate);
+      await setDoc(doc(db, COLLECTIONS.CANDIDATES, id), candidate);
+      console.log(`✅ Candidate added successfully: ${id}`);
       toast.success('Candidate added');
     } catch (err) {
-      console.error('Failed to add candidate to Firestore', err);
-      toast.error('Failed to add candidate');
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to add candidate: ${error.message}`);
     }
     setNewCandidate({ name: '', position: '', manifesto: '', photo: '' });
     setShowCandidateForm(false);
@@ -214,8 +224,8 @@ const AdminDashboard = () => {
       console.log('🔄 Starting election reset...');
 
       // Delete positions collection
-      console.log('Deleting positions...');
-      const positionsDocs = await getDocs(collection(db, 'positions'));
+      console.log(`Deleting ${COLLECTIONS.POSITIONS}...`);
+      const positionsDocs = await getDocs(collection(db, COLLECTIONS.POSITIONS));
       let positionCount = 0;
       if (positionsDocs.docs.length > 0) {
         let batch = writeBatch(db);
@@ -235,8 +245,8 @@ const AdminDashboard = () => {
       console.log(`✅ Deleted ${positionCount} positions`);
 
       // Delete eligible_students collection
-      console.log('Deleting eligible_students...');
-      const studentsDocs = await getDocs(collection(db, 'eligible_students'));
+      console.log(`Deleting ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
+      const studentsDocs = await getDocs(collection(db, COLLECTIONS.ELIGIBLE_STUDENTS));
       let studentCount = 0;
       if (studentsDocs.docs.length > 0) {
         let batch = writeBatch(db);
@@ -256,8 +266,8 @@ const AdminDashboard = () => {
       console.log(`✅ Deleted ${studentCount} student records`);
 
       // Delete candidates collection
-      console.log('Deleting candidates...');
-      const candidatesDocs = await getDocs(collection(db, 'candidates'));
+      console.log(`Deleting ${COLLECTIONS.CANDIDATES}...`);
+      const candidatesDocs = await getDocs(collection(db, COLLECTIONS.CANDIDATES));
       let candidateCount = 0;
       if (candidatesDocs.docs.length > 0) {
         let batch = writeBatch(db);
@@ -277,8 +287,8 @@ const AdminDashboard = () => {
       console.log(`✅ Deleted ${candidateCount} candidates`);
 
       // Delete votes collection
-      console.log('Deleting votes...');
-      const votesDocs = await getDocs(collection(db, 'votes'));
+      console.log(`Deleting ${COLLECTIONS.VOTES}...`);
+      const votesDocs = await getDocs(collection(db, COLLECTIONS.VOTES));
       let voteCount = 0;
       if (votesDocs.docs.length > 0) {
         let batch = writeBatch(db);
@@ -313,8 +323,9 @@ const AdminDashboard = () => {
       console.log('✅ Election reset complete!');
       toast.success(`Election reset successfully. Deleted ${positionCount} positions, ${studentCount} students, ${candidateCount} candidates, and ${voteCount} votes.`);
     } catch (err) {
-      console.error('❌ Failed to reset election', err);
-      toast.error(`Failed to reset election: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to reset election: ${error.message}`);
     }
   };
 
@@ -323,17 +334,22 @@ const AdminDashboard = () => {
     try {
       if (editingPosition) {
         // Update existing position in Firestore
-        await setDoc(doc(db, 'positions', editingPosition.id), { id: editingPosition.id, title: positionTitle });
+        console.log(`📝 Updating position ${editingPosition.id}:`, { id: editingPosition.id, title: positionTitle });
+        await setDoc(doc(db, COLLECTIONS.POSITIONS, editingPosition.id), { id: editingPosition.id, title: positionTitle });
+        console.log(`✅ Position updated successfully: ${editingPosition.id}`);
         toast.success('Position updated');
       } else {
         // Create new position
         const id = `pos-${Date.now()}`;
-        await setDoc(doc(db, 'positions', id), { id, title: positionTitle });
+        console.log(`📝 Adding new position to ${COLLECTIONS.POSITIONS}:`, { id, title: positionTitle });
+        await setDoc(doc(db, COLLECTIONS.POSITIONS, id), { id, title: positionTitle });
+        console.log(`✅ Position added successfully: ${id}`);
         toast.success('Position added');
       }
     } catch (err) {
-      console.error('Failed to save position to Firestore', err);
-      toast.error('Failed to save position');
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to save position: ${error.message}`);
     }
     setPositionTitle('');
     setEditingPosition(null);
@@ -391,10 +407,11 @@ const AdminDashboard = () => {
           // Write to Firestore in a batch using MatricNumber as doc ID
           (async () => {
             try {
+              console.log(`📝 Batch writing ${mapped.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
               const batch = writeBatch(db);
               mapped.forEach((v) => {
                 const id = v.matricNumber;
-                const ref = doc(db, 'eligible_students', id);
+                const ref = doc(db, COLLECTIONS.ELIGIBLE_STUDENTS, id);
                 batch.set(ref, {
                   matricNumber: v.matricNumber,
                   fullName: v.fullName,
@@ -405,10 +422,12 @@ const AdminDashboard = () => {
                 });
               });
               await batch.commit();
-              toast.success(`Saved ${mapped.length} students to eligible_students`);
+              console.log(`✅ Batch commit successful: ${mapped.length} students saved`);
+              toast.success(`Saved ${mapped.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}`);
             } catch (err) {
-              console.error('Failed to write eligible_students batch', err);
-              toast.error('Failed to save students to database');
+              const error = err as any;
+              console.error(`Firestore Error [${error.code}]:`, error.message, error);
+              toast.error(`Failed to save students: ${error.message}`);
             }
           })();
 
@@ -420,7 +439,7 @@ const AdminDashboard = () => {
       };
       reader.readAsArrayBuffer(file);
     }).catch((err) => {
-      console.error('Failed to load exceljs', err);
+      console.error('Failed to load exceljs module:', err);
       toast.error('Unable to load Excel parser');
     });
     e.target.value = '';
@@ -616,11 +635,14 @@ const AdminDashboard = () => {
                                 size="sm"
                                 onClick={async () => {
                                   try {
-                                    await deleteDoc(doc(db, 'candidates', c.id));
+                                    console.log(`🗑️ Deleting candidate ${c.id} from ${COLLECTIONS.CANDIDATES}`);
+                                    await deleteDoc(doc(db, COLLECTIONS.CANDIDATES, c.id));
+                                    console.log(`✅ Candidate deleted: ${c.id}`);
                                     toast.success('Candidate deleted');
                                   } catch (err) {
-                                    console.error('Failed to delete candidate in Firestore', err);
-                                    toast.error('Failed to delete candidate');
+                                    const error = err as any;
+                                    console.error(`Firestore Error [${error.code}]:`, error.message, error);
+                                    toast.error(`Failed to delete candidate: ${error.message}`);
                                   }
                                 }}
                               >
@@ -670,11 +692,14 @@ const AdminDashboard = () => {
                           size="sm"
                           onClick={async () => {
                             try {
-                              await deleteDoc(doc(db, 'positions', pos.id));
+                              console.log(`🗑️ Deleting position ${pos.id} from ${COLLECTIONS.POSITIONS}`);
+                              await deleteDoc(doc(db, COLLECTIONS.POSITIONS, pos.id));
+                              console.log(`✅ Position deleted: ${pos.id}`);
                               toast.success('Position deleted');
                             } catch (err) {
-                              console.error('Failed to delete position', err);
-                              toast.error('Failed to delete position');
+                              const error = err as any;
+                              console.error(`Firestore Error [${error.code}]:`, error.message, error);
+                              toast.error(`Failed to delete position: ${error.message}`);
                             }
                           }}
                         >
