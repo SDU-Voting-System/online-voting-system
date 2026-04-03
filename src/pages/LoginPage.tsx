@@ -32,16 +32,16 @@ const LoginPage = () => {
     const emailTrim = email.trim().toLowerCase();
 
     // Admin bypass (system admin credentials) - Hardcoded and evaluated first
-    if (matricTrim.toUpperCase() === 'ADMIN/001' && emailTrim === 'admin@university.edu') {
+    if (matricTrim.toUpperCase() === 'ADMIN/001' && emailTrim === 'admin.university.edu@gmail.com') {
       try {
         // Try to sign in with admin credentials first
-        await signInWithEmailAndPassword(auth, 'admin@university.edu', '001');
+        await signInWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
         console.log('✅ Admin signed in successfully to Firebase Auth');
       } catch (signInError: any) {
         // If user doesn't exist, create it
         if (signInError.code === 'auth/user-not-found') {
           try {
-            await createUserWithEmailAndPassword(auth, 'admin@university.edu', '001');
+            await createUserWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
             console.log('✅ Admin account created and signed in');
           } catch (createError) {
             console.error('❌ Failed to create admin account:', createError);
@@ -63,7 +63,7 @@ const LoginPage = () => {
         fullName: 'System Administrator',
         department: 'Administration',
         faculty: 'Administration',
-        email: 'admin@university.edu',
+        email: 'admin.university.edu@gmail.com',
         hasVoted: false,
       };
       login(adminVoter, true);

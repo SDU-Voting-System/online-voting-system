@@ -73,7 +73,7 @@ npm run deploy       # Deploy to GitHub Pages
 
 For system administration and setup:
 - Matric Number: `ADMIN/001`
-- Email: `admin@university.edu`
+- Email: `admin.university.edu@gmail.com`
 
 These credentials provide immediate access to the admin dashboard without OTP verification, even if the eligible students database is empty.
 
