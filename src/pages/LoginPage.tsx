@@ -23,7 +23,12 @@ const LoginPage = () => {
   const [generatedOTP, setGeneratedOTP] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false); // Track if user is admin
   const { voters, login } = useElectionStore();
+
+  // Hardcoded admin credentials
+  const ADMIN_MATRIC = 'ADMIN/001';
+  const ADMIN_EMAIL = 'admin.university.edu@gmail.com';
 
   const handleSendOtp = async () => {
     setError('');
@@ -31,115 +36,75 @@ const LoginPage = () => {
     const matricTrim = matric.trim();
     const emailTrim = email.trim().toLowerCase();
 
-    // Admin bypass (system admin credentials) - Hardcoded and evaluated first
-    if (matricTrim.toUpperCase() === 'ADMIN/001' && emailTrim === 'admin.university.edu@gmail.com') {
-      console.log('🔐 Admin bypass triggered for ADMIN/001 / admin.university.edu@gmail.com');
-      let authSuccess = false;
-      let authError: string | null = null;
-
-      try {
-        // Try to sign in with admin credentials first
-        console.log('📝 Attempting to sign in with existing credentials...');
-        await signInWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
-        console.log('✅ Admin signed in successfully with existing credentials');
-        authSuccess = true;
-      } catch (signInError: any) {
-        console.error(`❌ Sign-in error [${signInError.code}]:`, signInError.message);
-        
-        // If user doesn't exist, create it
-        if (signInError.code === 'auth/user-not-found') {
-          console.log('📝 Admin account not found. Creating new account...');
-          try {
-            await createUserWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
-            console.log('✅ Admin account created successfully and signed in');
-            authSuccess = true;
-          } catch (createError: any) {
-            console.error(`❌ Account creation failed [${createError.code}]:`, createError.message);
-            authError = createError.message;
-          }
-        } 
-        // If email already exists (account partially created), try sign in with password
-        else if (signInError.code === 'auth/email-already-in-use') {
-          console.log('📝 Email already exists. Attempting password reset or direct sign-in...');
-          authError = 'Admin email already registered. Please contact system administrator.';
-        }
-        // For invalid-credential or other errors, provide helpful feedback
-        else if (signInError.code === 'auth/invalid-credential') {
-          console.log('📝 Invalid credentials. This could mean the account exists with a different password.');
-          authError = 'Invalid admin credentials. Account may exist with different password.';
-        }
-        else {
-          authError = signInError.message;
-        }
-      }
-
-      if (!authSuccess && authError) {
-        console.error('❌ Admin authentication failed:', authError);
-        setError(`Admin authentication failed: ${authError}`);
-        setLoading(false);
-        return;
-      }
-
-      if (!authSuccess) {
-        console.error('❌ Admin authentication failed: Unknown error');
-        setError('Admin authentication failed. Please try again.');
-        setLoading(false);
-        return;
-      }
-
-      // Immediately grant admin access without checking Firestore or voters array
-      const adminVoter = {
-        matricNumber: 'ADMIN/001',
-        fullName: 'System Administrator',
-        department: 'Administration',
-        faculty: 'Administration',
-        email: 'admin.university.edu@gmail.com',
-        hasVoted: false,
-      };
-      console.log('✅ Granting admin access and redirecting to /admin dashboard');
-      login(adminVoter, true);
-      navigate('/admin');
-      setLoading(false);
-      return;
-    }
+    // Check if credentials match admin hardcoded values
+    const isAdminAttempt = matricTrim.toUpperCase() === ADMIN_MATRIC && emailTrim === ADMIN_EMAIL;
 
     try {
-      // Check eligible_students collection by matric number (doc id)
-      const ref = doc(db, 'eligible_students', matricTrim);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setError('Matric number and email do not match any registered voter.');
-        setLoading(false);
-        return;
-      }
-      const data = snap.data() as any;
-      if ((data.email || '').toString().toLowerCase() !== emailTrim) {
-        setError('Matric number and email do not match any registered voter.');
-        setLoading(false);
-        return;
-      }
-      if (data.hasVoted) {
-        setError('Your vote has already been recorded');
-        setLoading(false);
-        return;
-      }
+      if (isAdminAttempt) {
+        // ===== ADMIN FLOW =====
+        console.log('🔐 Admin credentials detected: ADMIN/001 / admin.university.edu@gmail.com');
+        console.log('📧 Generating OTP for admin (bypassing Firestore lookup)...');
+        
+        // Generate 6-digit OTP for admin
+        const newOtp = Math.floor(100000 + Math.random() * 900000);
+        const otpString = String(newOtp);
+        setGeneratedOTP(otpString);
+        setIsAdmin(true);
 
-      // Generate 6-digit OTP and save to state IMMEDIATELY as string
-      const newOtp = Math.floor(100000 + Math.random() * 900000);
-      const otpString = String(newOtp);
-      setGeneratedOTP(otpString);
+        // Send OTP via EmailJS to admin email
+        console.log(`📧 Sending OTP to ${ADMIN_EMAIL}...`);
+        await emailjs.send('SDU_online_voting001', 'SDU_online_voting002', {
+          to_email: ADMIN_EMAIL,
+          otp_code: otpString,
+        });
 
-      // Send OTP via EmailJS
-      await emailjs.send('SDU_online_voting001', 'SDU_online_voting002', {
-        to_email: data.email,
-        otp_code: otpString,
-      });
+        console.log('✅ OTP sent successfully to admin email');
+        setStep('otp');
+      } else {
+        // ===== STUDENT FLOW =====
+        // Check eligible_students collection by matric number
+        const ref = doc(db, 'eligible_students', matricTrim);
+        const snap = await getDoc(ref);
+        
+        if (!snap.exists()) {
+          setError('Matric number and email do not match any registered voter.');
+          setLoading(false);
+          return;
+        }
+        
+        const data = snap.data() as any;
+        if ((data.email || '').toString().toLowerCase() !== emailTrim) {
+          setError('Matric number and email do not match any registered voter.');
+          setLoading(false);
+          return;
+        }
+        
+        if (data.hasVoted) {
+          setError('Your vote has already been recorded');
+          setLoading(false);
+          return;
+        }
 
-      // Only transition to OTP screen if email sent successfully
-      setStep('otp');
+        // Generate 6-digit OTP for student
+        const newOtp = Math.floor(100000 + Math.random() * 900000);
+        const otpString = String(newOtp);
+        setGeneratedOTP(otpString);
+        setIsAdmin(false);
+
+        // Send OTP via EmailJS
+        console.log(`📧 Sending OTP to ${data.email}...`);
+        await emailjs.send('SDU_online_voting001', 'SDU_online_voting002', {
+          to_email: data.email,
+          otp_code: otpString,
+        });
+
+        console.log('✅ OTP sent successfully to student email');
+        setStep('otp');
+      }
     } catch (err) {
       console.error('Error sending OTP', err);
       setError('Failed to send OTP. Please try again.');
+      setLoading(false);
     } finally {
       setLoading(false);
     }
@@ -149,9 +114,7 @@ const LoginPage = () => {
     setError('');
     const userInput = otp.trim();
     
-    // Debug log
-    console.log('Expected:', generatedOTP, 'Got:', userInput);
-
+    console.log('🔐 OTP Verification - Validating input...');
     if (userInput.length !== 6) {
       setError('Please enter a valid 6-digit code.');
       return;
@@ -161,37 +124,93 @@ const LoginPage = () => {
       return;
     }
 
-    const matricTrim = matric.trim();
-    try {
-      const ref = doc(db, 'eligible_students', matricTrim);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setError('Matric number not found.');
-        return;
-      }
-      const data = snap.data() as any;
-      if (data.hasVoted) {
-        setError('Your vote has already been recorded');
-        return;
-      }
+    setLoading(true);
+    
+    if (isAdmin) {
+      // ===== ADMIN OTP VERIFICATION =====
+      console.log('🔐 Admin OTP verified. Authenticating with Firebase...');
+      try {
+        // Try to sign in with admin credentials
+        console.log(`📝 Attempting Firebase sign-in for ${ADMIN_EMAIL}...`);
+        let user;
+        try {
+          const result = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, '001');
+          user = result.user;
+          console.log('✅ Admin signed in successfully');
+        } catch (signInError: any) {
+          // If account doesn't exist, create it
+          if (signInError.code === 'auth/user-not-found') {
+            console.log('📝 Admin account not found. Creating new account...');
+            const result = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, '001');
+            user = result.user;
+            console.log('✅ Admin account created successfully');
+          } else {
+            throw signInError;
+          }
+        }
 
-      // Sign in anonymously
-      await signInAnonymously(auth);
+        if (!user) {
+          throw new Error('Failed to authenticate admin user');
+        }
 
-      // Create voter object from Firestore data and log in to local store
-      const voter = {
-        matricNumber: matricTrim,
-        fullName: data.fullName || '',
-        department: data.department || '',
-        faculty: data.faculty || '',
-        email: data.email || '',
-        hasVoted: !!data.hasVoted,
-      };
-      login(voter, false);
-      navigate('/vote');
-    } catch (err) {
-      console.error('Verification error', err);
-      setError('Verification failed. Try again later.');
+        // Create admin voter object
+        const adminVoter = {
+          matricNumber: ADMIN_MATRIC,
+          fullName: 'System Administrator',
+          department: 'Administration',
+          faculty: 'Administration',
+          email: ADMIN_EMAIL,
+          hasVoted: false,
+        };
+
+        console.log('✅ Granting admin access and redirecting to /admin dashboard');
+        login(adminVoter, true);
+        navigate('/admin');
+      } catch (err) {
+        console.error('❌ Admin authentication failed:', err);
+        setError('Admin authentication failed. Please try again later.');
+        setLoading(false);
+      }
+    } else {
+      // ===== STUDENT OTP VERIFICATION =====
+      const matricTrim = matric.trim();
+      console.log(`🔐 Student OTP verified. Authenticating student ${matricTrim}...`);
+      try {
+        const ref = doc(db, 'eligible_students', matricTrim);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+          setError('Matric number not found.');
+          setLoading(false);
+          return;
+        }
+        const data = snap.data() as any;
+        if (data.hasVoted) {
+          setError('Your vote has already been recorded');
+          setLoading(false);
+          return;
+        }
+
+        // Sign in anonymously
+        console.log('📝 Signing in student anonymously...');
+        await signInAnonymously(auth);
+
+        // Create voter object from Firestore data and log in to local store
+        const voter = {
+          matricNumber: matricTrim,
+          fullName: data.fullName || '',
+          department: data.department || '',
+          faculty: data.faculty || '',
+          email: data.email || '',
+          hasVoted: !!data.hasVoted,
+        };
+        console.log('✅ Student authenticated. Redirecting to voting booth...');
+        login(voter, false);
+        navigate('/vote');
+      } catch (err) {
+        console.error('❌ Student verification error', err);
+        setError('Verification failed. Try again later.');
+        setLoading(false);
+      }
     }
   };
 
