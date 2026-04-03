@@ -69,6 +69,8 @@ const AdminDashboard = () => {
 
   const [firestoreVoters, setFirestoreVoters] = useState<Voter[]>([]);
   const [firestoreVotes, setFirestoreVotes] = useState<any[]>([]);
+  const [firestorePositions, setFirestorePositions] = useState<Position[]>([]);
+  const [firestoreCandidates, setFirestoreCandidates] = useState<Candidate[]>([]);
 
   // Listen to eligible_students collection in real-time
   useEffect(() => {
@@ -108,6 +110,47 @@ const AdminDashboard = () => {
     return () => unsub();
   }, []);
 
+  // Listen to positions collection in real-time
+  useEffect(() => {
+    const positionsCollection = collection(db, 'positions');
+    const unsub = onSnapshot(positionsCollection, (snap) => {
+      const positions: Position[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          title: data.title || '',
+        };
+      });
+      setFirestorePositions(positions);
+      console.log(`Real-time positions update: ${positions.length} positions`, positions);
+    }, (err) => {
+      console.error('positions onSnapshot error', err);
+    });
+    return () => unsub();
+  }, []);
+
+  // Listen to candidates collection in real-time
+  useEffect(() => {
+    const candidatesCollection = collection(db, 'candidates');
+    const unsub = onSnapshot(candidatesCollection, (snap) => {
+      const candidates: Candidate[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: data.name || '',
+          position: data.position || '',
+          manifesto: data.manifesto || '',
+          photo: data.photo || '',
+        };
+      });
+      setFirestoreCandidates(candidates);
+      console.log(`Real-time candidates update: ${candidates.length} candidates`, candidates);
+    }, (err) => {
+      console.error('candidates onSnapshot error', err);
+    });
+    return () => unsub();
+  }, []);
+
   const filteredVoters = useMemo(() => {
     const source = firestoreVoters.length ? firestoreVoters : store.voters;
     if (!search) return source;
@@ -122,9 +165,7 @@ const AdminDashboard = () => {
     const id = `cand-${Date.now()}`;
     const candidate = { ...newCandidate, id } as Candidate;
     try {
-      // update local store
-      store.addCandidate(candidate as any);
-      // persist to Firestore
+      // persist to Firestore (listeners will sync UI automatically)
       await setDoc(doc(db, 'candidates', id), candidate);
       toast.success('Candidate added');
     } catch (err) {
@@ -164,13 +205,34 @@ const AdminDashboard = () => {
 
   const handleResetElection = async () => {
     const confirmed = window.confirm(
-      'Are you sure you want to reset the election? This will permanently delete all candidates, votes, and the uploaded student master list.'
+      'Are you sure you want to reset the election? This will permanently delete all positions, candidates, votes, and the uploaded student master list.'
     );
 
     if (!confirmed) return;
 
     try {
       console.log('🔄 Starting election reset...');
+
+      // Delete positions collection
+      console.log('Deleting positions...');
+      const positionsDocs = await getDocs(collection(db, 'positions'));
+      let positionCount = 0;
+      if (positionsDocs.docs.length > 0) {
+        let batch = writeBatch(db);
+        let batchCount = 0;
+        positionsDocs.docs.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+          batchCount++;
+          positionCount++;
+          if (batchCount === 500) {
+            batch.commit();
+            batch = writeBatch(db);
+            batchCount = 0;
+          }
+        });
+        if (batchCount > 0) await batch.commit();
+      }
+      console.log(`✅ Deleted ${positionCount} positions`);
 
       // Delete eligible_students collection
       console.log('Deleting eligible_students...');
@@ -239,46 +301,39 @@ const AdminDashboard = () => {
       store.voters.length = 0;
       store.candidates.length = 0;
       store.votes.length = 0;
+      store.positions.length = 0;
       setFirestoreVoters([]);
       setFirestoreVotes([]);
+      setFirestorePositions([]);
+      setFirestoreCandidates([]);
       setParsedVoters([]);
       setSearch('');
       setActiveTab('voters');
 
       console.log('✅ Election reset complete!');
-      toast.success(`Election reset successfully. Deleted ${studentCount} students, ${candidateCount} candidates, and ${voteCount} votes.`);
+      toast.success(`Election reset successfully. Deleted ${positionCount} positions, ${studentCount} students, ${candidateCount} candidates, and ${voteCount} votes.`);
     } catch (err) {
       console.error('❌ Failed to reset election', err);
       toast.error(`Failed to reset election: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
-  const handleSavePosition = () => {
+  const handleSavePosition = async () => {
     if (!positionTitle.trim()) return;
-    if (editingPosition) {
-      store.updatePosition(editingPosition.id, positionTitle);
-      // update Firestore document if it exists
-      (async () => {
-        try {
-          await setDoc(doc(db, 'positions', editingPosition.id), { id: editingPosition.id, title: positionTitle });
-          toast.success('Position updated');
-        } catch (err) {
-          console.error('Failed to update position in Firestore', err);
-          toast.error('Failed to update position in database');
-        }
-      })();
-    } else {
-      const id = `pos-${Date.now()}`;
-      store.addPosition(positionTitle, id as any);
-      (async () => {
-        try {
-          await setDoc(doc(db, 'positions', id), { id, title: positionTitle });
-          toast.success('Position added');
-        } catch (err) {
-          console.error('Failed to add position to Firestore', err);
-          toast.error('Failed to save position');
-        }
-      })();
+    try {
+      if (editingPosition) {
+        // Update existing position in Firestore
+        await setDoc(doc(db, 'positions', editingPosition.id), { id: editingPosition.id, title: positionTitle });
+        toast.success('Position updated');
+      } else {
+        // Create new position
+        const id = `pos-${Date.now()}`;
+        await setDoc(doc(db, 'positions', id), { id, title: positionTitle });
+        toast.success('Position added');
+      }
+    } catch (err) {
+      console.error('Failed to save position to Firestore', err);
+      toast.error('Failed to save position');
     }
     setPositionTitle('');
     setEditingPosition(null);
@@ -377,10 +432,10 @@ const AdminDashboard = () => {
     setShowSaveBtn(false);
   };
 
-  // Analytics - Aggregate from Firestore votes
+  // Analytics - Aggregate from Firestore votes and positions/candidates
   const tallyByPosition = useMemo(() => {
-    return store.positions.map((pos) => {
-      const posCandidates = store.candidates.filter((c) => c.position === pos.id);
+    return firestorePositions.map((pos) => {
+      const posCandidates = firestoreCandidates.filter((c) => c.position === pos.id);
       const tallies = posCandidates.map((c) => {
         // Count votes from Firestore votes collection
         const count = firestoreVotes.filter((v) => v.candidateId === c.id).length;
@@ -388,7 +443,7 @@ const AdminDashboard = () => {
       });
       return { position: pos, tallies };
     });
-  }, [store.positions, store.candidates, firestoreVotes]);
+  }, [firestorePositions, firestoreCandidates, firestoreVotes]);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'voters', label: 'Voters', icon: <Users className="h-4 w-4" /> },
@@ -473,6 +528,14 @@ const AdminDashboard = () => {
                   className="pl-9"
                 />
               </div>
+              {firestoreVoters.length === 0 ? (
+                <div className="mt-8 rounded-lg border border-dashed bg-card p-8 text-center">
+                  <Users className="mx-auto h-12 w-12 text-muted-foreground/50" />
+                  <p className="mt-3 text-sm font-medium">No voters found.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Please upload or add student voter data to begin.</p>
+                </div>
+              ) : (
+                <>
               <div className="mt-4 overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
                   <thead>
@@ -508,6 +571,8 @@ const AdminDashboard = () => {
                 </table>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">{filteredVoters.length} voter(s) found</p>
+                </>
+              )}
             </div>
           )}
 
@@ -520,16 +585,16 @@ const AdminDashboard = () => {
                   <Plus className="mr-2 h-4 w-4" /> Add New Candidate
                 </Button>
               </div>
-              {store.candidates.length === 0 ? (
+              {firestoreCandidates.length === 0 ? (
                 <div className="mt-8 rounded-lg border border-dashed bg-card p-8 text-center">
                   <UserCheck className="mx-auto h-12 w-12 text-muted-foreground/50" />
                   <p className="mt-3 text-sm font-medium">No candidates registered yet.</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Use the form above to add candidates for available positions.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Add positions first, then register candidates for each position.</p>
                 </div>
               ) : (
                 <div className="mt-6 space-y-4">
-                  {store.positions.map((pos) => {
-                    const posCandidates = store.candidates.filter((c) => c.position === pos.id);
+                  {firestorePositions.map((pos) => {
+                    const posCandidates = firestoreCandidates.filter((c) => c.position === pos.id);
                     if (posCandidates.length === 0) return null;
                     return (
                       <div key={pos.id}>
@@ -551,7 +616,6 @@ const AdminDashboard = () => {
                                 size="sm"
                                 onClick={async () => {
                                   try {
-                                    store.deleteCandidate(c.id);
                                     await deleteDoc(doc(db, 'candidates', c.id));
                                     toast.success('Candidate deleted');
                                   } catch (err) {
@@ -582,29 +646,45 @@ const AdminDashboard = () => {
                   <Plus className="mr-2 h-4 w-4" /> Add Position
                 </Button>
               </div>
-              <div className="mt-6 space-y-2">
-                {store.positions.map((pos) => (
-                  <div key={pos.id} className="flex items-center justify-between rounded-lg border bg-card p-4">
-                    <p className="font-medium">{pos.title}</p>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => { setEditingPosition(pos); setPositionTitle(pos.title); setShowPositionForm(true); }}
-                      >
-                        <Edit2 className="mr-1 h-3 w-3" /> Edit
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => store.deletePosition(pos.id)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+              {firestorePositions.length === 0 ? (
+                <div className="mt-8 rounded-lg border border-dashed bg-card p-8 text-center">
+                  <Settings className="mx-auto h-12 w-12 text-muted-foreground/50" />
+                  <p className="mt-3 text-sm font-medium">No positions found.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Please add or upload positions to begin the voting setup.</p>
+                </div>
+              ) : (
+                <div className="mt-6 space-y-2">
+                  {firestorePositions.map((pos) => (
+                    <div key={pos.id} className="flex items-center justify-between rounded-lg border bg-card p-4">
+                      <p className="font-medium">{pos.title}</p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => { setEditingPosition(pos); setPositionTitle(pos.title); setShowPositionForm(true); }}
+                        >
+                          <Edit2 className="mr-1 h-3 w-3" /> Edit
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await deleteDoc(doc(db, 'positions', pos.id));
+                              toast.success('Position deleted');
+                            } catch (err) {
+                              console.error('Failed to delete position', err);
+                              toast.error('Failed to delete position');
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -620,9 +700,14 @@ const AdminDashboard = () => {
                 </Button>
               </div>
               <div className="mt-6 space-y-3">
-                {store.polls.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No polls created yet.</p>
-                )}
+                {store.polls.length === 0 ? (
+                  <div className="rounded-lg border border-dashed bg-card p-8 text-center">
+                    <Vote className="mx-auto h-12 w-12 text-muted-foreground/50" />
+                    <p className="mt-3 text-sm font-medium">No polls found.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Please add or create polls to engage students.</p>
+                  </div>
+                ) : (
+                  <>
                 {store.polls.map((poll) => (
                   <div key={poll.id} className="rounded-lg border bg-card p-4">
                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -658,6 +743,8 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                 ))}
+                  </>
+                )}
               </div>
               </div>
             </div>
@@ -734,7 +821,7 @@ const AdminDashboard = () => {
                   <SelectValue placeholder="Select position" />
                 </SelectTrigger>
                 <SelectContent>
-                  {store.positions.map((pos) => (
+                  {firestorePositions.map((pos) => (
                     <SelectItem key={pos.id} value={pos.id}>{pos.title}</SelectItem>
                   ))}
                 </SelectContent>

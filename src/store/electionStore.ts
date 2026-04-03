@@ -77,13 +77,7 @@ interface ElectionStore {
   votePoll: (pollId: string, option: string) => void;
 }
 
-const defaultPositions: Position[] = [
-  { id: 'president', title: 'President' },
-  { id: 'vice-president', title: 'Vice President' },
-  { id: 'secretary-general', title: 'Secretary General' },
-  { id: 'treasurer', title: 'Treasurer' },
-  { id: 'pro', title: 'Public Relations Officer' },
-];
+const defaultPositions: Position[] = [];
 
 const defaultVoters: Voter[] = [];
 
