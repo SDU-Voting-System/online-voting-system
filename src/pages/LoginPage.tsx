@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { db, auth } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { signInAnonymously } from 'firebase/auth';
+import { signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import emailjs from '@emailjs/browser';
 
 // Initialize EmailJS
@@ -33,6 +33,30 @@ const LoginPage = () => {
 
     // Admin bypass (system admin credentials) - Hardcoded and evaluated first
     if (matricTrim.toUpperCase() === 'ADMIN/001' && emailTrim === 'admin@university.edu') {
+      try {
+        // Try to sign in with admin credentials first
+        await signInWithEmailAndPassword(auth, 'admin@university.edu', '001');
+        console.log('✅ Admin signed in successfully to Firebase Auth');
+      } catch (signInError: any) {
+        // If user doesn't exist, create it
+        if (signInError.code === 'auth/user-not-found') {
+          try {
+            await createUserWithEmailAndPassword(auth, 'admin@university.edu', '001');
+            console.log('✅ Admin account created and signed in');
+          } catch (createError) {
+            console.error('❌ Failed to create admin account:', createError);
+            setError('Admin authentication failed.');
+            setLoading(false);
+            return;
+          }
+        } else {
+          console.error('❌ Admin sign-in failed:', signInError);
+          setError('Admin authentication failed.');
+          setLoading(false);
+          return;
+        }
+      }
+
       // Immediately grant admin access without checking Firestore or voters array
       const adminVoter = {
         matricNumber: 'ADMIN/001',
