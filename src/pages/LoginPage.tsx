@@ -33,28 +33,58 @@ const LoginPage = () => {
 
     // Admin bypass (system admin credentials) - Hardcoded and evaluated first
     if (matricTrim.toUpperCase() === 'ADMIN/001' && emailTrim === 'admin.university.edu@gmail.com') {
+      console.log('🔐 Admin bypass triggered for ADMIN/001 / admin.university.edu@gmail.com');
+      let authSuccess = false;
+      let authError: string | null = null;
+
       try {
         // Try to sign in with admin credentials first
+        console.log('📝 Attempting to sign in with existing credentials...');
         await signInWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
-        console.log('✅ Admin signed in successfully to Firebase Auth');
+        console.log('✅ Admin signed in successfully with existing credentials');
+        authSuccess = true;
       } catch (signInError: any) {
+        console.error(`❌ Sign-in error [${signInError.code}]:`, signInError.message);
+        
         // If user doesn't exist, create it
         if (signInError.code === 'auth/user-not-found') {
+          console.log('📝 Admin account not found. Creating new account...');
           try {
             await createUserWithEmailAndPassword(auth, 'admin.university.edu@gmail.com', '001');
-            console.log('✅ Admin account created and signed in');
-          } catch (createError) {
-            console.error('❌ Failed to create admin account:', createError);
-            setError('Admin authentication failed.');
-            setLoading(false);
-            return;
+            console.log('✅ Admin account created successfully and signed in');
+            authSuccess = true;
+          } catch (createError: any) {
+            console.error(`❌ Account creation failed [${createError.code}]:`, createError.message);
+            authError = createError.message;
           }
-        } else {
-          console.error('❌ Admin sign-in failed:', signInError);
-          setError('Admin authentication failed.');
-          setLoading(false);
-          return;
+        } 
+        // If email already exists (account partially created), try sign in with password
+        else if (signInError.code === 'auth/email-already-in-use') {
+          console.log('📝 Email already exists. Attempting password reset or direct sign-in...');
+          authError = 'Admin email already registered. Please contact system administrator.';
         }
+        // For invalid-credential or other errors, provide helpful feedback
+        else if (signInError.code === 'auth/invalid-credential') {
+          console.log('📝 Invalid credentials. This could mean the account exists with a different password.');
+          authError = 'Invalid admin credentials. Account may exist with different password.';
+        }
+        else {
+          authError = signInError.message;
+        }
+      }
+
+      if (!authSuccess && authError) {
+        console.error('❌ Admin authentication failed:', authError);
+        setError(`Admin authentication failed: ${authError}`);
+        setLoading(false);
+        return;
+      }
+
+      if (!authSuccess) {
+        console.error('❌ Admin authentication failed: Unknown error');
+        setError('Admin authentication failed. Please try again.');
+        setLoading(false);
+        return;
       }
 
       // Immediately grant admin access without checking Firestore or voters array
@@ -66,6 +96,7 @@ const LoginPage = () => {
         email: 'admin.university.edu@gmail.com',
         hasVoted: false,
       };
+      console.log('✅ Granting admin access and redirecting to /admin dashboard');
       login(adminVoter, true);
       navigate('/admin');
       setLoading(false);
