@@ -3,7 +3,7 @@ import { useElectionStore, Candidate, Position, Voter, Poll } from '@/store/elec
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { db } from '@/firebase';
+import { auth, db } from '@/firebase';
 import { writeBatch, doc, setDoc, deleteDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Settings, Users, UserCheck, BarChart3, Plus, Trash2, Search, Upload, Edit2, ShieldCheck, LogOut, Save, Vote, Power, AlertTriangle,
@@ -168,10 +168,22 @@ const AdminDashboard = () => {
   }, [firestoreVoters, store.voters, search]);
 
   const handleAddCandidate = async () => {
-    if (!newCandidate.name || !newCandidate.position) return;
+    // Auth check
+    if (!auth.currentUser) {
+      console.error('❌ No user authenticated. Cannot add candidate.');
+      toast.error('You must be authenticated to add candidates');
+      return;
+    }
+
+    if (!newCandidate.name || !newCandidate.position) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
     const id = `cand-${Date.now()}`;
     const candidate = { ...newCandidate, id } as Candidate;
     try {
+      console.log(`📝 User authenticated: ${auth.currentUser.email}`);
       console.log(`📝 Adding candidate to ${COLLECTIONS.CANDIDATES}:`, candidate);
       // persist to Firestore (listeners will sync UI automatically)
       await setDoc(doc(db, COLLECTIONS.CANDIDATES, id), candidate);
@@ -330,8 +342,20 @@ const AdminDashboard = () => {
   };
 
   const handleSavePosition = async () => {
-    if (!positionTitle.trim()) return;
+    // Auth check
+    if (!auth.currentUser) {
+      console.error('❌ No user authenticated. Cannot add position.');
+      toast.error('You must be authenticated to add positions');
+      return;
+    }
+
+    if (!positionTitle.trim()) {
+      toast.error('Please enter a position title');
+      return;
+    }
+
     try {
+      console.log(`📝 User authenticated: ${auth.currentUser.email}`);
       if (editingPosition) {
         // Update existing position in Firestore
         console.log(`📝 Updating position ${editingPosition.id}:`, { id: editingPosition.id, title: positionTitle });
@@ -406,7 +430,15 @@ const AdminDashboard = () => {
 
           // Write to Firestore in a batch using MatricNumber as doc ID
           (async () => {
+            // Auth check before batch write
+            if (!auth.currentUser) {
+              console.error('❌ No user authenticated. Cannot save students.');
+              toast.error('You must be authenticated to upload students');
+              return;
+            }
+
             try {
+              console.log(`📝 User authenticated: ${auth.currentUser.email}`);
               console.log(`📝 Batch writing ${mapped.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
               const batch = writeBatch(db);
               mapped.forEach((v) => {
