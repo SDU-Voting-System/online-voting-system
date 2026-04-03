@@ -23,12 +23,11 @@ const LoginPage = () => {
   const [generatedOTP, setGeneratedOTP] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false); // Track if user is admin
   const { voters, login } = useElectionStore();
 
   // Hardcoded admin credentials
   const ADMIN_MATRIC = 'ADMIN/001';
-  const ADMIN_EMAIL = 'admin.university.edu@gmail.com';
+  const ADMIN_EMAIL = 'admin@university.edu';
 
   const handleSendOtp = async () => {
     setError('');
@@ -41,25 +40,39 @@ const LoginPage = () => {
 
     try {
       if (isAdminAttempt) {
-        // ===== ADMIN FLOW =====
-        console.log('🔐 Admin credentials detected: ADMIN/001 / admin.university.edu@gmail.com');
-        console.log('📧 Generating OTP for admin (bypassing Firestore lookup)...');
+        // ===== ADMIN INSTANT BYPASS (NO OTP) =====
+        console.log('🔐 ADMIN INSTANT BYPASS: ADMIN/001 / admin@university.edu');
+        console.log('✅ Skipping OTP flow - authenticating directly...');
         
-        // Generate 6-digit OTP for admin
-        const newOtp = Math.floor(100000 + Math.random() * 900000);
-        const otpString = String(newOtp);
-        setGeneratedOTP(otpString);
-        setIsAdmin(true);
+        // Authenticate admin directly with Firebase
+        try {
+          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, 'admin001');
+          console.log('✅ Admin Firebase auth successful');
+        } catch (signInError: any) {
+          // If account doesn't exist, create it
+          if (signInError.code === 'auth/user-not-found') {
+            console.log('📝 Creating admin account...');
+            await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, 'admin001');
+            console.log('✅ Admin account created');
+          } else {
+            throw signInError;
+          }
+        }
 
-        // Send OTP via EmailJS to admin email
-        console.log(`📧 Sending OTP to ${ADMIN_EMAIL}...`);
-        await emailjs.send('SDU_online_voting001', 'SDU_online_voting002', {
-          to_email: ADMIN_EMAIL,
-          otp_code: otpString,
-        });
-
-        console.log('✅ OTP sent successfully to admin email');
-        setStep('otp');
+        // Set admin state and redirect immediately
+        const adminVoter = {
+          matricNumber: ADMIN_MATRIC,
+          fullName: 'System Administrator',
+          department: 'Administration',
+          faculty: 'Administration',
+          email: ADMIN_EMAIL,
+          hasVoted: false,
+        };
+        console.log('✅ Redirecting to admin dashboard');
+        login(adminVoter, true);
+        navigate('/admin');
+        setLoading(false);
+        return;
       } else {
         // ===== STUDENT FLOW =====
         // Check eligible_students collection by matric number
@@ -126,91 +139,44 @@ const LoginPage = () => {
 
     setLoading(true);
     
-    if (isAdmin) {
-      // ===== ADMIN OTP VERIFICATION =====
-      console.log('🔐 Admin OTP verified. Authenticating with Firebase...');
-      try {
-        // Try to sign in with admin credentials
-        console.log(`📝 Attempting Firebase sign-in for ${ADMIN_EMAIL}...`);
-        let user;
-        try {
-          const result = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, '001');
-          user = result.user;
-          console.log('✅ Admin signed in successfully');
-        } catch (signInError: any) {
-          // If account doesn't exist, create it
-          if (signInError.code === 'auth/user-not-found') {
-            console.log('📝 Admin account not found. Creating new account...');
-            const result = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, '001');
-            user = result.user;
-            console.log('✅ Admin account created successfully');
-          } else {
-            throw signInError;
-          }
-        }
-
-        if (!user) {
-          throw new Error('Failed to authenticate admin user');
-        }
-
-        // Create admin voter object
-        const adminVoter = {
-          matricNumber: ADMIN_MATRIC,
-          fullName: 'System Administrator',
-          department: 'Administration',
-          faculty: 'Administration',
-          email: ADMIN_EMAIL,
-          hasVoted: false,
-        };
-
-        console.log('✅ Granting admin access and redirecting to /admin dashboard');
-        login(adminVoter, true);
-        navigate('/admin');
-      } catch (err) {
-        console.error('❌ Admin authentication failed:', err);
-        setError('Admin authentication failed. Please try again later.');
+    // ===== STUDENT OTP VERIFICATION =====
+    const matricTrim = matric.trim();
+    console.log(`🔐 Student OTP verified. Authenticating student ${matricTrim}...`);
+    try {
+      const ref = doc(db, 'eligible_students', matricTrim);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        setError('Matric number not found.');
         setLoading(false);
+        return;
       }
-    } else {
-      // ===== STUDENT OTP VERIFICATION =====
-      const matricTrim = matric.trim();
-      console.log(`🔐 Student OTP verified. Authenticating student ${matricTrim}...`);
-      try {
-        const ref = doc(db, 'eligible_students', matricTrim);
-        const snap = await getDoc(ref);
-        if (!snap.exists()) {
-          setError('Matric number not found.');
-          setLoading(false);
-          return;
-        }
-        const data = snap.data() as any;
-        if (data.hasVoted) {
-          setError('Your vote has already been recorded');
-          setLoading(false);
-          return;
-        }
-
-        // Sign in anonymously
-        console.log('📝 Signing in student anonymously...');
-        await signInAnonymously(auth);
-
-        // Create voter object from Firestore data and log in to local store
-        const voter = {
-          matricNumber: matricTrim,
-          fullName: data.fullName || '',
-          department: data.department || '',
-          faculty: data.faculty || '',
-          email: data.email || '',
-          hasVoted: !!data.hasVoted,
-        };
-        console.log('✅ Student authenticated. Redirecting to voting booth...');
-        login(voter, false);
-        navigate('/vote');
-      } catch (err) {
-        console.error('❌ Student verification error', err);
-        setError('Verification failed. Try again later.');
+      const data = snap.data() as any;
+      if (data.hasVoted) {
+        setError('Your vote has already been recorded');
         setLoading(false);
+        return;
       }
+
+      // Sign in anonymously
+      console.log('📝 Signing in student anonymously...');
+      await signInAnonymously(auth);
+
+      // Create voter object from Firestore data and log in to local store
+      const voter = {
+        matricNumber: matricTrim,
+        fullName: data.fullName || '',
+        department: data.department || '',
+        faculty: data.faculty || '',
+        email: data.email || '',
+        hasVoted: !!data.hasVoted,
+      };
+      console.log('✅ Student authenticated. Redirecting to voting booth...');
+      login(voter, false);
+      navigate('/vote');
+    } catch (err) {
+      console.error('❌ Student verification error', err);
+      setError('Verification failed. Try again later.');
+      setLoading(false);
     }
   };
 
