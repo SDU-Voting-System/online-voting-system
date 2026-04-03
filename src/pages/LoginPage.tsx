@@ -102,7 +102,6 @@ const LoginPage = () => {
         const newOtp = Math.floor(100000 + Math.random() * 900000);
         const otpString = String(newOtp);
         setGeneratedOTP(otpString);
-        setIsAdmin(false);
 
         // Send OTP via EmailJS
         console.log(`📧 Sending OTP to ${data.email}...`);
