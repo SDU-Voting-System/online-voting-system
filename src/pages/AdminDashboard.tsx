@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useElectionStore, Candidate, Position, Voter, Poll } from '@/store/electionStore';
+import { useElectionStore, Candidate, Position, Voter } from '@/store/electionStore';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { auth, db } from '@/firebase';
+import { db } from '@/firebase';
+import { sanitizeMatricForFirestore, normalizeEmail } from '@/lib/utils';
 import { writeBatch, doc, setDoc, deleteDoc, onSnapshot, collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
-  Settings, Users, UserCheck, BarChart3, Plus, Trash2, Search, Upload, Edit2, ShieldCheck, LogOut, Save, Vote, Power, AlertTriangle,
+  Settings, Users, UserCheck, BarChart3, Plus, Trash2, Search, Upload, Edit2, ShieldCheck, LogOut, Save, Power, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-type Tab = 'voters' | 'candidates' | 'positions' | 'polls' | 'analytics';
+type Tab = 'voters' | 'candidates' | 'positions' | 'analytics';
 
 interface FirebaseVote {
   id?: string;
@@ -57,20 +58,18 @@ const AdminDashboard = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  // Candidate form
+  // Candidate form with preview/staging
   const [showCandidateForm, setShowCandidateForm] = useState(false);
   const [newCandidate, setNewCandidate] = useState({ name: '', position: '', manifesto: '', photo: '' });
 
-  // Position form
+  // Position form with preview/staging
   const [showPositionForm, setShowPositionForm] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [positionTitle, setPositionTitle] = useState('');
+  const [stagedPosition, setStagedPosition] = useState<Position | null>(null);
 
-  // Poll form
-  const [showPollForm, setShowPollForm] = useState(false);
-  const [editingPoll, setEditingPoll] = useState<Poll | null>(null);
-  const [pollQuestion, setPollQuestion] = useState('');
-  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  // Candidate form with preview/staging
+  const [stagedCandidate, setStagedCandidate] = useState<Candidate | null>(null);
   useEffect(() => {
     if (!store.currentUser || !store.isAdmin) navigate('/login');
   }, [store.currentUser, store.isAdmin, navigate]);
@@ -89,7 +88,7 @@ const AdminDashboard = () => {
       const mapped: Voter[] = snap.docs.map((d) => {
         const data = d.data() as any;
         return {
-          matricNumber: d.id,
+          matricNumber: data.matricNumber || d.id,
           fullName: data.fullName || '',
           department: data.department || '',
           faculty: data.faculty || '',
@@ -168,10 +167,10 @@ const AdminDashboard = () => {
   }, [firestoreVoters, store.voters, search]);
 
   const handleAddCandidate = async () => {
-    // Auth check
-    if (!auth.currentUser) {
-      console.error('❌ No user authenticated. Cannot add candidate.');
-      toast.error('You must be authenticated to add candidates');
+    // Auth check: use store admin state instead of Firebase auth
+    if (!store.isAdmin) {
+      console.error('❌ Admin not authenticated. Cannot add candidate.');
+      toast.error('Admin authorization required');
       return;
     }
 
@@ -182,20 +181,9 @@ const AdminDashboard = () => {
 
     const id = `cand-${Date.now()}`;
     const candidate = { ...newCandidate, id } as Candidate;
-    try {
-      console.log(`📝 User authenticated: ${auth.currentUser.email}`);
-      console.log(`📝 Adding candidate to ${COLLECTIONS.CANDIDATES}:`, candidate);
-      // persist to Firestore (listeners will sync UI automatically)
-      await setDoc(doc(db, COLLECTIONS.CANDIDATES, id), candidate);
-      console.log(`✅ Candidate added successfully: ${id}`);
-      toast.success('Candidate added');
-    } catch (err) {
-      const error = err as any;
-      console.error(`Firestore Error [${error.code}]:`, error.message, error);
-      toast.error(`Failed to add candidate: ${error.message}`);
-    }
-    setNewCandidate({ name: '', position: '', manifesto: '', photo: '' });
-    setShowCandidateForm(false);
+    // Stage candidate for preview before saving
+    setStagedCandidate(candidate);
+    console.log(`📋 Staging candidate for preview:`, candidate);
   };
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,6 +214,12 @@ const AdminDashboard = () => {
   };
 
   const handleResetElection = async () => {
+    // Auth check for reset
+    if (!store.isAdmin) {
+      toast.error('Only admin can reset election');
+      return;
+    }
+
     const confirmed = window.confirm(
       'Are you sure you want to reset the election? This will permanently delete all positions, candidates, votes, and the uploaded student master list.'
     );
@@ -342,10 +336,10 @@ const AdminDashboard = () => {
   };
 
   const handleSavePosition = async () => {
-    // Auth check
-    if (!auth.currentUser) {
-      console.error('❌ No user authenticated. Cannot add position.');
-      toast.error('You must be authenticated to add positions');
+    // Auth check: use store admin state instead of Firebase auth
+    if (!store.isAdmin) {
+      console.error('❌ Admin not authenticated. Cannot add position.');
+      toast.error('Admin authorization required');
       return;
     }
 
@@ -354,30 +348,10 @@ const AdminDashboard = () => {
       return;
     }
 
-    try {
-      console.log(`📝 User authenticated: ${auth.currentUser.email}`);
-      if (editingPosition) {
-        // Update existing position in Firestore
-        console.log(`📝 Updating position ${editingPosition.id}:`, { id: editingPosition.id, title: positionTitle });
-        await setDoc(doc(db, COLLECTIONS.POSITIONS, editingPosition.id), { id: editingPosition.id, title: positionTitle });
-        console.log(`✅ Position updated successfully: ${editingPosition.id}`);
-        toast.success('Position updated');
-      } else {
-        // Create new position
-        const id = `pos-${Date.now()}`;
-        console.log(`📝 Adding new position to ${COLLECTIONS.POSITIONS}:`, { id, title: positionTitle });
-        await setDoc(doc(db, COLLECTIONS.POSITIONS, id), { id, title: positionTitle });
-        console.log(`✅ Position added successfully: ${id}`);
-        toast.success('Position added');
-      }
-    } catch (err) {
-      const error = err as any;
-      console.error(`Firestore Error [${error.code}]:`, error.message, error);
-      toast.error(`Failed to save position: ${error.message}`);
-    }
-    setPositionTitle('');
-    setEditingPosition(null);
-    setShowPositionForm(false);
+    // Stage position for preview before saving
+    const id = editingPosition?.id || `pos-${Date.now()}`;
+    setStagedPosition({ id, title: positionTitle });
+    console.log(`📋 Staging position for preview:`, { id, title: positionTitle });
   };
 
   const [parsedVoters, setParsedVoters] = useState<Voter[]>([]);
@@ -428,41 +402,6 @@ const AdminDashboard = () => {
           setParsedVoters(mapped);
           store.addVoters(mapped);
 
-          // Write to Firestore in a batch using MatricNumber as doc ID
-          (async () => {
-            // Auth check before batch write
-            if (!auth.currentUser) {
-              console.error('❌ No user authenticated. Cannot save students.');
-              toast.error('You must be authenticated to upload students');
-              return;
-            }
-
-            try {
-              console.log(`📝 User authenticated: ${auth.currentUser.email}`);
-              console.log(`📝 Batch writing ${mapped.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
-              const batch = writeBatch(db);
-              mapped.forEach((v) => {
-                const id = v.matricNumber;
-                const ref = doc(db, COLLECTIONS.ELIGIBLE_STUDENTS, id);
-                batch.set(ref, {
-                  matricNumber: v.matricNumber,
-                  fullName: v.fullName,
-                  department: v.department,
-                  faculty: v.faculty,
-                  email: v.email,
-                  hasVoted: v.hasVoted,
-                });
-              });
-              await batch.commit();
-              console.log(`✅ Batch commit successful: ${mapped.length} students saved`);
-              toast.success(`Saved ${mapped.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}`);
-            } catch (err) {
-              const error = err as any;
-              console.error(`Firestore Error [${error.code}]:`, error.message, error);
-              toast.error(`Failed to save students: ${error.message}`);
-            }
-          })();
-
           setShowSaveBtn(true);
         }).catch((err: any) => {
           console.error('Failed to parse Excel file via exceljs', err);
@@ -477,10 +416,138 @@ const AdminDashboard = () => {
     e.target.value = '';
   };
 
-  const handleSaveToDatabase = () => {
-    console.log('Voter data for Firebase:', JSON.stringify(parsedVoters, null, 2));
-    toast.success('Voter List Prepared for Firebase');
-    setShowSaveBtn(false);
+  const handleSaveToDatabase = async () => {
+    // Auth check: use store admin state instead of Firebase auth
+    if (!store.isAdmin) {
+      console.error('❌ Admin not authenticated. Cannot save students.');
+      toast.error('Admin authorization required');
+      return;
+    }
+
+    try {
+      console.log(`📝 Admin authenticated. Preparing to batch write ${parsedVoters.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
+      
+      // Normalize and deduplicate voters
+      const normalizedVoters = new Map<string, Voter>();
+      const duplicates: string[] = [];
+      
+      parsedVoters.forEach((v) => {
+        // Normalize both matric and email for consistent storage and lookup
+        const normalizedMatric = sanitizeMatricForFirestore(v.matricNumber);
+        const normalizedEmail = normalizeEmail(v.email);
+        const dedupeKey = `${normalizedMatric}|${normalizedEmail}`;
+        
+        if (normalizedVoters.has(dedupeKey)) {
+          console.warn(`⚠️ Duplicate voter detected: ${v.matricNumber} → ${normalizedMatric}`);
+          duplicates.push(v.matricNumber);
+        } else {
+          normalizedVoters.set(dedupeKey, {
+            matricNumber: normalizedMatric,
+            fullName: (v.fullName || '').trim(),
+            department: (v.department || '').trim(),
+            faculty: (v.faculty || '').trim(),
+            email: normalizedEmail,
+            hasVoted: false,
+          });
+        }
+      });
+      
+      if (duplicates.length > 0) {
+        console.warn(`⚠️ Found ${duplicates.length} duplicate voters, skipping them`);
+        toast.warning(`Skipped ${duplicates.length} duplicate voter(s)`);
+      }
+      
+      const votersToSave = Array.from(normalizedVoters.values());
+      console.log(`📝 Batch writing ${votersToSave.length} unique students to ${COLLECTIONS.ELIGIBLE_STUDENTS}...`);
+      
+      const batch = writeBatch(db);
+      votersToSave.forEach((v) => {
+        const docId = v.matricNumber;
+        const ref = doc(db, COLLECTIONS.ELIGIBLE_STUDENTS, docId);
+        
+        batch.set(ref, {
+          matricNumber: v.matricNumber,
+          fullName: v.fullName,
+          department: v.department,
+          faculty: v.faculty,
+          email: v.email,
+          hasVoted: false,
+        });
+        
+        console.log(`  📌 Queued: ${v.matricNumber} (${v.email})`);
+      });
+      
+      await batch.commit();
+      console.log(`✅ Batch commit successful: ${votersToSave.length} students saved to Firestore`);
+      toast.success(`Saved ${votersToSave.length} students to ${COLLECTIONS.ELIGIBLE_STUDENTS}`);
+      setParsedVoters([]);
+      setShowSaveBtn(false);
+    } catch (err) {
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to save students: ${error.message}`);
+    }
+  };
+
+  const handleSavePositionToFirestore = async () => {
+    if (!stagedPosition) return;
+    if (!store.isAdmin) {
+      toast.error('Admin authorization required');
+      return;
+    }
+
+    try {
+      console.log(`📝 Saving position to ${COLLECTIONS.POSITIONS}:`, stagedPosition);
+      await setDoc(doc(db, COLLECTIONS.POSITIONS, stagedPosition.id), {
+        id: stagedPosition.id,
+        title: stagedPosition.title,
+      });
+      console.log(`✅ Position saved successfully: ${stagedPosition.id}`);
+      toast.success(editingPosition ? 'Position updated' : 'Position added');
+      setStagedPosition(null);
+      setPositionTitle('');
+      setEditingPosition(null);
+      setShowPositionForm(false);
+    } catch (err) {
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to save position: ${error.message}`);
+    }
+  };
+
+  const handleSaveCandidateToFirestore = async () => {
+    if (!stagedCandidate) return;
+    if (!store.isAdmin) {
+      toast.error('Admin authorization required');
+      return;
+    }
+
+    try {
+      console.log(`📝 Saving candidate to ${COLLECTIONS.CANDIDATES}:`, stagedCandidate);
+      await setDoc(doc(db, COLLECTIONS.CANDIDATES, stagedCandidate.id), stagedCandidate);
+      console.log(`✅ Candidate saved successfully: ${stagedCandidate.id}`);
+      toast.success('Candidate added');
+      setStagedCandidate(null);
+      setNewCandidate({ name: '', position: '', manifesto: '', photo: '' });
+      setShowCandidateForm(false);
+    } catch (err) {
+      const error = err as any;
+      console.error(`Firestore Error [${error.code}]:`, error.message, error);
+      toast.error(`Failed to save candidate: ${error.message}`);
+    }
+  };
+
+  const handleAddCandidateClose = () => {
+    setStagedCandidate(null);
+    setNewCandidate({ name: '', position: '', manifesto: '', photo: '' });
+    setShowCandidateForm(false);
+  };
+
+  const handleAddPositionClose = () => {
+    setStagedPosition(null);
+    setPositionTitle('');
+    setEditingPosition(null);
+    setShowPositionForm(false);
   };
 
   // Analytics - Aggregate from Firestore votes and positions/candidates
@@ -500,7 +567,6 @@ const AdminDashboard = () => {
     { id: 'voters', label: 'Voters', icon: <Users className="h-4 w-4" /> },
     { id: 'candidates', label: 'Candidates', icon: <UserCheck className="h-4 w-4" /> },
     { id: 'positions', label: 'Positions', icon: <Settings className="h-4 w-4" /> },
-    { id: 'polls', label: 'Polls', icon: <Vote className="h-4 w-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="h-4 w-4" /> },
   ];
 
@@ -579,6 +645,40 @@ const AdminDashboard = () => {
                   className="pl-9"
                 />
               </div>
+              
+              {/* Show preview of uploaded voters before saving */}
+              {showSaveBtn && parsedVoters.length > 0 && (
+                <div className="mt-6 rounded-lg border bg-secondary p-4">
+                  <p className="text-sm font-semibold">📋 Preview: {parsedVoters.length} voter(s) ready to save</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Review the data below, then click "Save to Database" to persist to Firestore.</p>
+                  <div className="mt-4 overflow-x-auto rounded border">
+                    <table className="w-full bg-background text-xs">
+                      <thead>
+                        <tr className="border-b bg-muted">
+                          <th className="px-3 py-2 text-left">Matric No.</th>
+                          <th className="px-3 py-2 text-left">Full Name</th>
+                          <th className="hidden px-3 py-2 text-left sm:table-cell">Email</th>
+                          <th className="hidden px-3 py-2 text-left md:table-cell">Dept</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedVoters.slice(0, 5).map((v, idx) => (
+                          <tr key={idx} className="border-b last:border-b-0">
+                            <td className="px-3 py-2 font-mono text-xs">{v.matricNumber}</td>
+                            <td className="px-3 py-2">{v.fullName}</td>
+                            <td className="hidden px-3 py-2 text-xs sm:table-cell">{v.email}</td>
+                            <td className="hidden px-3 py-2 md:table-cell">{v.department}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {parsedVoters.length > 5 && (
+                    <p className="mt-2 text-xs text-muted-foreground">... and {parsedVoters.length - 5} more</p>
+                  )}
+                </div>
+              )}
+
               {firestoreVoters.length === 0 ? (
                 <div className="mt-8 rounded-lg border border-dashed bg-card p-8 text-center">
                   <Users className="mx-auto h-12 w-12 text-muted-foreground/50" />
@@ -745,68 +845,6 @@ const AdminDashboard = () => {
             </div>
           )}
 
-          {/* POLLS TAB */}
-          {activeTab === 'polls' && (
-            <div>
-              {/* Poll Management */}
-              <div>
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <h2 className="text-xl font-bold">Poll Management</h2>
-                <Button onClick={() => { setEditingPoll(null); setPollQuestion(''); setPollOptions(['', '']); setShowPollForm(true); }} size="sm">
-                  <Plus className="mr-2 h-4 w-4" /> Create Poll
-                </Button>
-              </div>
-              <div className="mt-6 space-y-3">
-                {store.polls.length === 0 ? (
-                  <div className="rounded-lg border border-dashed bg-card p-8 text-center">
-                    <Vote className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                    <p className="mt-3 text-sm font-medium">No polls found.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Please add or create polls to engage students.</p>
-                  </div>
-                ) : (
-                  <>
-                {store.polls.map((poll) => (
-                  <div key={poll.id} className="rounded-lg border bg-card p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <p className="font-medium">{poll.question}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Options: {poll.options.join(', ')} • {Object.values(poll.votes).reduce((a, b) => a + b, 0)} votes
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant={poll.isActive ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => store.togglePollActive(poll.id)}
-                        >
-                          <Power className="mr-1 h-3 w-3" /> {poll.isActive ? 'Active' : 'Inactive'}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => { setEditingPoll(poll); setPollQuestion(poll.question); setPollOptions([...poll.options]); setShowPollForm(true); }}
-                        >
-                          <Edit2 className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => store.deletePoll(poll.id)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                  </>
-                )}
-              </div>
-              </div>
-            </div>
-          )}
-
           {/* ANALYTICS TAB */}
           {activeTab === 'analytics' && (
             <div>
@@ -859,57 +897,80 @@ const AdminDashboard = () => {
           <DialogHeader>
             <DialogTitle>Add New Candidate</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-sm font-semibold">Full Name</Label>
-              <Input
-                value={newCandidate.name}
-                onChange={(e) => setNewCandidate((p) => ({ ...p, name: e.target.value }))}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label className="text-sm font-semibold">Position</Label>
-              <Select
-                value={newCandidate.position}
-                onValueChange={(v) => setNewCandidate((p) => ({ ...p, position: v }))}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select position" />
-                </SelectTrigger>
-                <SelectContent>
-                  {firestorePositions.map((pos) => (
-                    <SelectItem key={pos.id} value={pos.id}>{pos.title}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-sm font-semibold">Manifesto</Label>
-              <Textarea
-                value={newCandidate.manifesto}
-                onChange={(e) => setNewCandidate((p) => ({ ...p, manifesto: e.target.value }))}
-                className="mt-1"
-                rows={4}
-              />
-            </div>
-            <div>
-              <Label className="text-sm font-semibold">Photo</Label>
-              <input
-                ref={photoInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handlePhotoUpload}
-              />
-              <Button variant="outline" size="sm" className="mt-1 w-full" onClick={() => photoInputRef.current?.click()}>
-                <Upload className="mr-2 h-4 w-4" /> {newCandidate.photo ? 'Photo Added ✓' : 'Add Photo'}
+          {!stagedCandidate ? (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-semibold">Full Name</Label>
+                <Input
+                  value={newCandidate.name}
+                  onChange={(e) => setNewCandidate((p) => ({ ...p, name: e.target.value }))}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-semibold">Position</Label>
+                <Select
+                  value={newCandidate.position}
+                  onValueChange={(v) => setNewCandidate((p) => ({ ...p, position: v }))}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select position" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {firestorePositions.map((pos) => (
+                      <SelectItem key={pos.id} value={pos.id}>{pos.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-sm font-semibold">Manifesto</Label>
+                <Textarea
+                  value={newCandidate.manifesto}
+                  onChange={(e) => setNewCandidate((p) => ({ ...p, manifesto: e.target.value }))}
+                  className="mt-1"
+                  rows={4}
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-semibold">Photo</Label>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                />
+                <Button variant="outline" size="sm" className="mt-1 w-full" onClick={() => photoInputRef.current?.click()}>
+                  <Upload className="mr-2 h-4 w-4" /> {newCandidate.photo ? 'Photo Added ✓' : 'Add Photo'}
+                </Button>
+              </div>
+              <Button onClick={handleAddCandidate} className="w-full font-semibold">
+                Preview & Continue
               </Button>
             </div>
-            <Button onClick={handleAddCandidate} className="w-full font-semibold">
-              Add Candidate
-            </Button>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-secondary p-4">
+                <p className="text-xs font-semibold text-muted-foreground">PREVIEW</p>
+                <p className="mt-2 text-sm font-semibold">{stagedCandidate.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {firestorePositions.find(p => p.id === stagedCandidate.position)?.title || 'Position'}
+                </p>
+                {stagedCandidate.manifesto && (
+                  <p className="mt-2 text-sm text-muted-foreground line-clamp-2">{stagedCandidate.manifesto}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setStagedCandidate(null)} className="w-full">
+                  Back & Edit
+                </Button>
+                <Button onClick={handleSaveCandidateToFirestore} className="w-full font-semibold">
+                  <Save className="mr-2 h-4 w-4" /> Save to Database
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -919,92 +980,37 @@ const AdminDashboard = () => {
           <DialogHeader>
             <DialogTitle>{editingPosition ? 'Edit Position' : 'Add New Position'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-sm font-semibold">Position Title</Label>
-              <Input
-                value={positionTitle}
-                onChange={(e) => setPositionTitle(e.target.value)}
-                placeholder="e.g. Director of Sports"
-                className="mt-1"
-              />
+          {!stagedPosition ? (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-semibold">Position Title</Label>
+                <Input
+                  value={positionTitle}
+                  onChange={(e) => setPositionTitle(e.target.value)}
+                  placeholder="e.g. Director of Sports"
+                  className="mt-1"
+                />
+              </div>
+              <Button onClick={handleSavePosition} className="w-full font-semibold">
+                Preview & Continue
+              </Button>
             </div>
-            <Button onClick={handleSavePosition} className="w-full font-semibold">
-              {editingPosition ? 'Save Changes' : 'Add Position'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Poll Dialog */}
-      <Dialog open={showPollForm} onOpenChange={setShowPollForm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingPoll ? 'Edit Poll' : 'Create New Poll'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-sm font-semibold">Question</Label>
-              <Input
-                value={pollQuestion}
-                onChange={(e) => setPollQuestion(e.target.value)}
-                placeholder="e.g. Should we extend library hours?"
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label className="text-sm font-semibold">Options</Label>
-              <div className="mt-1 space-y-2">
-                {pollOptions.map((opt, i) => (
-                  <div key={i} className="flex gap-2">
-                    <Input
-                      value={opt}
-                      onChange={(e) => {
-                        const updated = [...pollOptions];
-                        updated[i] = e.target.value;
-                        setPollOptions(updated);
-                      }}
-                      placeholder={`Option ${i + 1}`}
-                    />
-                    {pollOptions.length > 2 && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setPollOptions(pollOptions.filter((_, j) => j !== i))}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-                {pollOptions.length < 6 && (
-                  <Button variant="outline" size="sm" onClick={() => setPollOptions([...pollOptions, ''])}>
-                    <Plus className="mr-1 h-3 w-3" /> Add Option
-                  </Button>
-                )}
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-secondary p-4">
+                <p className="text-xs font-semibold text-muted-foreground">PREVIEW</p>
+                <p className="mt-2 text-lg font-semibold">{stagedPosition.title}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={handleAddPositionClose} className="w-full">
+                  Back & Edit
+                </Button>
+                <Button onClick={handleSavePositionToFirestore} className="w-full font-semibold">
+                  <Save className="mr-2 h-4 w-4" /> Save to Database
+                </Button>
               </div>
             </div>
-            <Button
-              className="w-full font-semibold"
-              onClick={() => {
-                const validOptions = pollOptions.filter(o => o.trim());
-                if (!pollQuestion.trim() || validOptions.length < 2) {
-                  toast.error('Provide a question and at least 2 options.');
-                  return;
-                }
-                if (editingPoll) {
-                  store.updatePoll(editingPoll.id, pollQuestion.trim(), validOptions);
-                  toast.success('Poll updated');
-                } else {
-                  store.addPoll(pollQuestion.trim(), validOptions);
-                  toast.success('Poll created');
-                }
-                setShowPollForm(false);
-              }}
-            >
-              {editingPoll ? 'Save Changes' : 'Create Poll'}
-            </Button>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

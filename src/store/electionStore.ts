@@ -27,14 +27,6 @@ export interface Vote {
   candidateId: string;
 }
 
-export interface Poll {
-  id: string;
-  question: string;
-  options: string[];
-  isActive: boolean;
-  votes: Record<string, number>; // option -> count
-}
-
 interface ElectionStore {
   // Auth
   currentUser: Voter | null;
@@ -67,14 +59,6 @@ interface ElectionStore {
   setElectionEndDate: (date: Date) => void;
   countdownEnabled: boolean;
   setCountdownEnabled: (enabled: boolean) => void;
-
-  // Polls
-  polls: Poll[];
-  addPoll: (question: string, options: string[]) => void;
-  updatePoll: (id: string, question: string, options: string[]) => void;
-  togglePollActive: (id: string) => void;
-  deletePoll: (id: string) => void;
-  votePoll: (pollId: string, option: string) => void;
 }
 
 const defaultPositions: Position[] = [];
@@ -82,8 +66,6 @@ const defaultPositions: Position[] = [];
 const defaultVoters: Voter[] = [];
 
 const defaultCandidates: Candidate[] = [];
-
-const defaultPolls: Poll[] = [];
 
 let idCounter = 100;
 const genId = () => `gen-${++idCounter}`;
@@ -103,11 +85,46 @@ const loadCountdownEnabled = (): boolean => {
   return true;
 };
 
-export const useElectionStore = create<ElectionStore>((set, get) => ({
-  currentUser: null,
-  isAdmin: false,
-  login: (voter, admin = false) => set({ currentUser: voter, isAdmin: admin }),
-  logout: () => set({ currentUser: null, isAdmin: false }),
+const loadAdminState = (): { currentUser: Voter | null; isAdmin: boolean } => {
+  try {
+    const stored = localStorage.getItem('adminState');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return { currentUser: parsed.currentUser || null, isAdmin: !!parsed.isAdmin };
+    }
+  } catch (e) {
+    console.error('Failed to load admin state:', e);
+  }
+  return { currentUser: null, isAdmin: false };
+};
+
+const saveAdminState = (currentUser: Voter | null, isAdmin: boolean) => {
+  try {
+    if (currentUser && isAdmin) {
+      localStorage.setItem('adminState', JSON.stringify({ currentUser, isAdmin }));
+      console.log('✅ Admin state persisted to localStorage');
+    } else {
+      localStorage.removeItem('adminState');
+    }
+  } catch (e) {
+    console.error('Failed to save admin state:', e);
+  }
+};
+
+export const useElectionStore = create<ElectionStore>((set, get) => {
+  const initialAdmin = loadAdminState();
+  
+  return {
+    currentUser: initialAdmin.currentUser,
+    isAdmin: initialAdmin.isAdmin,
+    login: (voter, admin = false) => {
+      saveAdminState(voter, admin);
+      set({ currentUser: voter, isAdmin: admin });
+    },
+    logout: () => {
+      saveAdminState(null, false);
+      set({ currentUser: null, isAdmin: false });
+    },
 
   voters: defaultVoters,
   addVoters: (newVoters) => set((s) => ({ voters: [...s.voters, ...newVoters] })),
@@ -141,20 +158,5 @@ export const useElectionStore = create<ElectionStore>((set, get) => ({
     localStorage.setItem('countdownEnabled', String(enabled));
     set({ countdownEnabled: enabled });
   },
-
-  // Polls
-  polls: defaultPolls,
-  addPoll: (question, options) => set((s) => ({
-    polls: [...s.polls, { id: genId(), question, options, isActive: false, votes: Object.fromEntries(options.map(o => [o, 0])) }],
-  })),
-  updatePoll: (id, question, options) => set((s) => ({
-    polls: s.polls.map(p => p.id === id ? { ...p, question, options, votes: Object.fromEntries(options.map(o => [o, p.votes[o] || 0])) } : p),
-  })),
-  togglePollActive: (id) => set((s) => ({
-    polls: s.polls.map(p => p.id === id ? { ...p, isActive: !p.isActive } : p),
-  })),
-  deletePoll: (id) => set((s) => ({ polls: s.polls.filter(p => p.id !== id) })),
-  votePoll: (pollId, option) => set((s) => ({
-    polls: s.polls.map(p => p.id === pollId ? { ...p, votes: { ...p.votes, [option]: (p.votes[option] || 0) + 1 } } : p),
-  })),
-}));
+  };
+});

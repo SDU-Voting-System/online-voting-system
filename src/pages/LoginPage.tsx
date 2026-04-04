@@ -6,9 +6,9 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { db, auth } from '@/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { db } from '@/firebase';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { sanitizeMatricForFirestore, normalizeEmail } from '@/lib/utils';
 import emailjs from '@emailjs/browser';
 
 // Initialize EmailJS
@@ -23,11 +23,12 @@ const LoginPage = () => {
   const [generatedOTP, setGeneratedOTP] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const { voters, login } = useElectionStore();
 
   // Hardcoded admin credentials
   const ADMIN_MATRIC = 'ADMIN/001';
-  const ADMIN_EMAIL = 'admin@university.edu';
+  const ADMIN_EMAIL = 'admin.university.edu@gmail.com';
 
   const handleSendOtp = async () => {
     setError('');
@@ -35,73 +36,76 @@ const LoginPage = () => {
     const matricTrim = matric.trim();
     const emailTrim = email.trim().toLowerCase();
 
-    // Check if credentials match admin hardcoded values
+    // Check if credentials match admin (exact match required)
     const isAdminAttempt = matricTrim.toUpperCase() === ADMIN_MATRIC && emailTrim === ADMIN_EMAIL;
 
     try {
       if (isAdminAttempt) {
-        // ===== ADMIN INSTANT BYPASS (NO OTP) =====
-        console.log('🔐 ADMIN INSTANT BYPASS: ADMIN/001 / admin@university.edu');
-        console.log('✅ Skipping OTP flow - authenticating directly...');
+        // ===== ADMIN OTP FLOW =====
+        console.log('🔐 Admin OTP flow triggered for ADMIN/001');
         
-        // Authenticate admin directly with Firebase
-        try {
-          await signInWithEmailAndPassword(auth, ADMIN_EMAIL, 'admin001');
-          console.log('✅ Admin Firebase auth successful');
-        } catch (signInError: any) {
-          // If account doesn't exist, create it
-          if (signInError.code === 'auth/user-not-found') {
-            console.log('📝 Creating admin account...');
-            await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, 'admin001');
-            console.log('✅ Admin account created');
-          } else {
-            throw signInError;
-          }
-        }
+        // Generate 6-digit OTP for admin
+        const newOtp = Math.floor(100000 + Math.random() * 900000);
+        const otpString = String(newOtp);
+        setGeneratedOTP(otpString);
+        setIsAdmin(true);
 
-        // Set admin state and redirect immediately
-        const adminVoter = {
-          matricNumber: ADMIN_MATRIC,
-          fullName: 'System Administrator',
-          department: 'Administration',
-          faculty: 'Administration',
-          email: ADMIN_EMAIL,
-          hasVoted: false,
-        };
-        console.log('✅ Redirecting to admin dashboard');
-        login(adminVoter, true);
-        navigate('/admin');
-        setLoading(false);
-        return;
+        // Send OTP via EmailJS to admin email
+        console.log(`📧 Sending OTP to ${ADMIN_EMAIL}...`);
+        await emailjs.send('SDU_online_voting001', 'SDU_online_voting002', {
+          to_email: ADMIN_EMAIL,
+          otp_code: otpString,
+        });
+
+        console.log('✅ OTP sent successfully. Waiting for admin to enter OTP.');
+        setStep('otp');
       } else {
-        // ===== STUDENT FLOW =====
-        // Check eligible_students collection by matric number
-        const ref = doc(db, 'eligible_students', matricTrim);
-        const snap = await getDoc(ref);
+        // ===== STUDENT OTP FLOW =====
+        console.log(`📧 Student OTP flow for matric: ${matricTrim}`);
         
-        if (!snap.exists()) {
+        // Normalize inputs for consistent lookup
+        const normalizedMatric = sanitizeMatricForFirestore(matricTrim);
+        const normalizedEmail = normalizeEmail(emailTrim);
+        
+        console.log(`🔍 Querying eligible_students: matricNumber="${normalizedMatric}", email="${normalizedEmail}"`);
+        
+        // Query by fields for resilient lookup
+        const q = query(
+          collection(db, 'eligible_students'),
+          where('matricNumber', '==', normalizedMatric),
+          where('email', '==', normalizedEmail)
+        );
+        
+        const querySnap = await getDocs(q);
+        console.log(`  ✅ Query returned ${querySnap.docs.length} document(s)`);
+        
+        if (querySnap.docs.length === 0) {
+          console.error(`❌ No voter found with matric="${normalizedMatric}" and email="${normalizedEmail}"`);
           setError('Matric number and email do not match any registered voter.');
           setLoading(false);
           return;
         }
         
-        const data = snap.data() as any;
-        if ((data.email || '').toString().toLowerCase() !== emailTrim) {
-          setError('Matric number and email do not match any registered voter.');
-          setLoading(false);
-          return;
+        if (querySnap.docs.length > 1) {
+          console.warn(`⚠️ Multiple voters found (${querySnap.docs.length}), using first match`);
         }
+        
+        const data = querySnap.docs[0].data() as any;
         
         if (data.hasVoted) {
+          console.warn(`⚠️ Student already voted: ${normalizedMatric}`);
           setError('Your vote has already been recorded');
           setLoading(false);
           return;
         }
+        
+        console.log(`✅ Voter found and validated: ${data.fullName}`);
 
         // Generate 6-digit OTP for student
         const newOtp = Math.floor(100000 + Math.random() * 900000);
         const otpString = String(newOtp);
         setGeneratedOTP(otpString);
+        setIsAdmin(false);
 
         // Send OTP via EmailJS
         console.log(`📧 Sending OTP to ${data.email}...`);
@@ -110,13 +114,22 @@ const LoginPage = () => {
           otp_code: otpString,
         });
 
-        console.log('✅ OTP sent successfully to student email');
+        console.log('✅ OTP sent successfully. Waiting for student to enter OTP.');
         setStep('otp');
       }
-    } catch (err) {
-      console.error('Error sending OTP', err);
-      setError('Failed to send OTP. Please try again.');
-      setLoading(false);
+    } catch (err: any) {
+      console.error('❌ OTP Send Error:', err.code || err.message || err);
+      
+      // Better error messages
+      if (err.code === 'permission-denied') {
+        setError('Permission denied. Check Firestore rules.');
+      } else if (err.code === 'not-found') {
+        setError('Collection or document not found.');
+      } else if (err.message?.includes('Invalid document reference')) {
+        setError('Invalid matric format.');
+      } else {
+        setError(`OTP send failed: ${err.message || 'Unknown error'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -126,7 +139,6 @@ const LoginPage = () => {
     setError('');
     const userInput = otp.trim();
     
-    console.log('🔐 OTP Verification - Validating input...');
     if (userInput.length !== 6) {
       setError('Please enter a valid 6-digit code.');
       return;
@@ -137,45 +149,82 @@ const LoginPage = () => {
     }
 
     setLoading(true);
-    
-    // ===== STUDENT OTP VERIFICATION =====
-    const matricTrim = matric.trim();
-    console.log(`🔐 Student OTP verified. Authenticating student ${matricTrim}...`);
-    try {
-      const ref = doc(db, 'eligible_students', matricTrim);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setError('Matric number not found.');
-        setLoading(false);
-        return;
-      }
-      const data = snap.data() as any;
-      if (data.hasVoted) {
-        setError('Your vote has already been recorded');
-        setLoading(false);
-        return;
-      }
 
-      // Sign in anonymously
-      console.log('📝 Signing in student anonymously...');
-      await signInAnonymously(auth);
+    if (isAdmin) {
+      // ===== ADMIN OTP VERIFICATION =====
+      console.log('✅ Admin OTP verified successfully');
+      try {
+        const adminVoter = {
+          matricNumber: ADMIN_MATRIC,
+          fullName: 'System Administrator',
+          department: 'Administration',
+          faculty: 'Administration',
+          email: ADMIN_EMAIL,
+          hasVoted: false,
+        };
 
-      // Create voter object from Firestore data and log in to local store
-      const voter = {
-        matricNumber: matricTrim,
-        fullName: data.fullName || '',
-        department: data.department || '',
-        faculty: data.faculty || '',
-        email: data.email || '',
-        hasVoted: !!data.hasVoted,
-      };
-      console.log('✅ Student authenticated. Redirecting to voting booth...');
-      login(voter, false);
-      navigate('/vote');
-    } catch (err) {
-      console.error('❌ Student verification error', err);
-      setError('Verification failed. Try again later.');
-      setLoading(false);
+        console.log('🔐 Access granted to admin');
+        login(adminVoter, true);
+        navigate('/admin');
+      } catch (err: any) {
+        console.error('❌ Admin access failed:', err.message);
+        setError(`Access failed: ${err.message}`);
+        setLoading(false);
+      }
+    } else {
+      // ===== STUDENT OTP VERIFICATION =====
+      const matricTrim = matric.trim();
+      const normalizedMatric = sanitizeMatricForFirestore(matricTrim);
+      const normalizedEmail = normalizeEmail(email.trim());
+      
+      console.log(`✅ Student OTP verified for matric: ${normalizedMatric}`);
+      try {
+        // Query using same normalized fields as OTP send
+        const q = query(
+          collection(db, 'eligible_students'),
+          where('matricNumber', '==', normalizedMatric),
+          where('email', '==', normalizedEmail)
+        );
+        
+        const querySnap = await getDocs(q);
+        
+        if (querySnap.docs.length === 0) {
+          console.error(`❌ Student ${normalizedMatric} not found during verification`);
+          setError('Student record not found.');
+          setLoading(false);
+          return;
+        }
+        
+        const data = querySnap.docs[0].data() as any;
+        if (data.hasVoted) {
+          console.warn(`⚠️ Student already voted: ${normalizedMatric}`);
+          setError('Your vote has already been recorded');
+          setLoading(false);
+          return;
+        }
+
+        // Create voter object from Firestore data
+        const voter = {
+          matricNumber: data.matricNumber,  // Use stored normalized matric
+          fullName: data.fullName || '',
+          department: data.department || '',
+          faculty: data.faculty || '',
+          email: data.email || '',
+          hasVoted: !!data.hasVoted,
+        };
+        
+        console.log('🔐 Access granted to student');
+        login(voter, false);
+        navigate('/vote');
+      } catch (err: any) {
+        console.error('❌ Verification error:', err.message || err);
+        if (err.code === 'permission-denied') {
+          setError('Verification permission denied. Contact admin.');
+        } else {
+          setError(`Verification failed: ${err.message || 'Unknown error'}`);
+        }
+        setLoading(false);
+      }
     }
   };
 
