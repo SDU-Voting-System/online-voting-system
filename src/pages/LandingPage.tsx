@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ShieldCheck, ArrowRight, TrendingUp } from 'lucide-react';
+import { ShieldCheck, ArrowRight } from 'lucide-react';
 import { useElectionStore } from '@/store/electionStore';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -19,9 +19,7 @@ const LandingPage = () => {
   
   // Firestore real-time state
   const [positions, setPositions] = useState<any[]>([]);
-  const [candidates, setCandidates] = useState<any[]>([]);
-  const [votes, setVotes] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [candidates, setCandidates] = useState<any[]>([]); 
 
   // Real-time listeners for Firestore
   useEffect(() => {
@@ -52,52 +50,18 @@ const LandingPage = () => {
           position: d.data().position || '',
         }));
         setCandidates(data);
-        console.log(`✅ Loaded ${data.length} candidates for results`);
+        console.log(`✅ Loaded ${data.length} candidates`);
       },
       (err) => console.error('Error loading candidates:', err)
     );
     unsubscribers.push(candUnsub);
-
-    // Listen to votes (real-time updates)
-    const votesUnsub = onSnapshot(
-      collection(db, COLLECTIONS.VOTES),
-      (snap) => {
-        const data = snap.docs.map((d) => ({
-          id: d.id,
-          positionId: d.data().positionId,
-          candidateId: d.data().candidateId,
-        }));
-        setVotes(data);
-        console.log(`📊 Real-time vote update: ${data.length} total votes`);
-        setLoading(false);
-      },
-      (err) => {
-        console.error('Error loading votes:', err);
-        setLoading(false);
-      }
-    );
-    unsubscribers.push(votesUnsub);
 
     return () => {
       unsubscribers.forEach((unsub) => unsub());
     };
   }, []);
 
-  // Compute vote tallies per position (same as AdminDashboard)
-  const tallyByPosition = useMemo(() => {
-    return positions.map((pos) => {
-      const posCandidates = candidates.filter((c) => c.position === pos.id);
-      const tallies = posCandidates.map((c) => {
-        const count = votes.filter((v) => v.candidateId === c.id).length;
-        return { candidate: c, count };
-      });
-      const totalVotes = tallies.reduce((sum, t) => sum + t.count, 0);
-      return { position: pos, tallies, totalVotes };
-    });
-  }, [positions, candidates, votes]);
 
-  // Check if there are any positions with votes
-  const hasResults = tallyByPosition.some((item) => item.totalVotes > 0);
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -137,69 +101,7 @@ const LandingPage = () => {
           </Button>
         </motion.div>
 
-        {/* Live Election Results */}
-        {!loading && hasResults && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
-            className="mt-16 w-full max-w-2xl"
-          >
-            <div className="rounded-lg border bg-card p-8 shadow-sm">
-              <div className="mb-6 flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
-                <h2 className="text-xl font-bold">Live Election Results</h2>
-              </div>
-              
-              <div className="space-y-10">
-                {tallyByPosition
-                  .filter((item) => item.totalVotes > 0)
-                  .map(({ position, tallies, totalVotes }) => {
-                    const maxCount = Math.max(...tallies.map((t) => t.count), 1);
-                    return (
-                      <div key={position.id}>
-                        <div className="mb-4">
-                          <p className="text-lg font-bold">{position.title}</p>
-                          <p className="text-xs text-muted-foreground">Total votes: {totalVotes}</p>
-                        </div>
-                        <div className="space-y-3">
-                          {tallies
-                            .sort((a, b) => b.count - a.count)
-                            .map(({ candidate, count }) => {
-                              const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-                              return (
-                                <div key={candidate.id} className="space-y-1">
-                                  <div className="flex items-center justify-between text-sm">
-                                    <span className="font-medium">{candidate.name}</span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {count} vote{count !== 1 ? 's' : ''} ({pct}%)
-                                    </span>
-                                  </div>
-                                  <div className="h-3 overflow-hidden rounded-full bg-secondary">
-                                    <motion.div
-                                      className="h-full bg-primary"
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${Math.max(pct, count > 0 ? 5 : 0)}%` }}
-                                      transition={{ duration: 0.6 }}
-                                    />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
 
-              <div className="mt-8 border-t pt-6">
-                <p className="text-sm text-muted-foreground">
-                  💾 Results update in real-time as votes are cast
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        )}
       </div>
 
       {/* Footer */}

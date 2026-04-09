@@ -754,9 +754,13 @@ const AdminDashboard = () => {
                           {posCandidates.map((c) => (
                             <div key={c.id} className="flex items-center justify-between rounded-lg border bg-card p-4">
                               <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                                  <UserCheck className="h-5 w-5 text-muted-foreground" />
-                                </div>
+                                {c.photo ? (
+                                  <img src={c.photo} alt={c.name} className="h-10 w-10 rounded-full object-cover" />
+                                ) : (
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                                    <UserCheck className="h-5 w-5 text-muted-foreground" />
+                                  </div>
+                                )}
                                 <div>
                                   <p className="font-medium">{c.name}</p>
                                   <p className="text-xs text-muted-foreground">{pos.title}</p>

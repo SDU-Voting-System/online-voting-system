@@ -213,9 +213,13 @@ const VotingBooth = () => {
                       }`}
                     >
                       <div className="flex items-start gap-4">
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary">
-                          <UserCheck className="h-6 w-6 text-muted-foreground" />
-                        </div>
+                        {candidate.photo ? (
+                          <img src={candidate.photo} alt={candidate.name} className="h-14 w-14 shrink-0 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secondary">
+                            <UserCheck className="h-6 w-6 text-muted-foreground" />
+                          </div>
+                        )}
                         <div className="flex-1">
                           <p className="font-bold">{candidate.name}</p>
                           <button
@@ -259,9 +263,13 @@ const VotingBooth = () => {
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{pos.title}</p>
                       {selected ? (
                         <div className="mt-2 flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                            <UserCheck className="h-5 w-5 text-muted-foreground" />
-                          </div>
+                          {selected.photo ? (
+                            <img src={selected.photo} alt={selected.name} className="h-10 w-10 rounded-full object-cover" />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                              <UserCheck className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                          )}
                           <p className="font-bold">{selected.name}</p>
                         </div>
                       ) : (
@@ -322,9 +330,13 @@ const VotingBooth = () => {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-                <UserCheck className="h-5 w-5 text-muted-foreground" />
-              </div>
+              {manifestoCandidate?.photo ? (
+                <img src={manifestoCandidate.photo} alt={manifestoCandidate?.name} className="h-10 w-10 rounded-full object-cover" />
+              ) : (
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
+                  <UserCheck className="h-5 w-5 text-muted-foreground" />
+                </div>
+              )}
               {manifestoCandidate?.name}
             </DialogTitle>
           </DialogHeader>
