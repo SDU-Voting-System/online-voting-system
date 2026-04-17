@@ -40,7 +40,7 @@ src/
 
 ```sh
 # Step 1: Clone the repository
-git clone https://github.com/Webcraft-lab/online-voting-system.git
+git clone https://github.com/SDU-Voting-System/online-voting-system.git
 
 # Step 2: Navigate to project directory
 cd online-voting-system
