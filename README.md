@@ -73,7 +73,7 @@ npm run deploy       # Deploy to GitHub Pages
 
 For system administration and setup:
 - Matric Number: `ADMIN/001`
-- Email: `admin@university.edu`
+- Email: `admin.university.edu@gmail.com`
 
 These credentials provide immediate access to the admin dashboard without OTP verification, even if the eligible students database is empty.
 
@@ -90,7 +90,7 @@ npm run deploy
 The build process will:
 1. Run `npm run build` to create optimized production files
 2. Deploy the `dist` folder to the `gh-pages` branch
-3. Make your site live at: `https://Webcraft-lab.github.io/online-voting-system/`
+3. Make your site live at: `https://SDU-Voting-System.github.io/online-voting-system/`
 
 Note: The app uses `HashRouter` for routing, ensuring that page refreshes don't result in 404 errors on GitHub Pages.
 
